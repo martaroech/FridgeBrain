@@ -19,6 +19,21 @@ import {
   nutrienti,
 } from "./comuni";
 
+function ignoraLogZxing() {
+  const originale = console.error;
+  console.error = (...argomenti: Parameters<typeof console.error>) => {
+    if (
+      typeof argomenti[0] === "string" &&
+      argomenti[0].includes("MultiFormatReader")
+    )
+      return;
+    originale(...argomenti);
+  };
+  return () => {
+    console.error = originale;
+  };
+}
+
 function Fotocamera({ rilevato }: { rilevato: (codice: string) => void }) {
   const video = useRef<HTMLVideoElement>(null);
   const [errore, impostaErrore] = useState("");
@@ -28,6 +43,7 @@ function Fotocamera({ rilevato }: { rilevato: (codice: string) => void }) {
     let annullato = false;
     let giaLetto = false;
     let controllo: { stop: () => void } | undefined;
+    let ripristinaLog: (() => void) | undefined;
     async function avvia() {
       impostaErrore("");
       impostaAttiva(false);
@@ -38,9 +54,20 @@ function Fotocamera({ rilevato }: { rilevato: (codice: string) => void }) {
         return;
       }
       try {
-        const { BrowserMultiFormatReader } = await import("@zxing/browser");
+        const { BarcodeFormat, BrowserMultiFormatOneDReader } = await import(
+          "@zxing/browser"
+        );
         if (annullato || !video.current) return;
-        const lettore = new BrowserMultiFormatReader();
+        ripristinaLog = ignoraLogZxing();
+        const formati = new Map();
+        // DecodeHintType.POSSIBLE_FORMATS: solo barcode alimentari, niente QR.
+        formati.set(2, [
+          BarcodeFormat.EAN_13,
+          BarcodeFormat.EAN_8,
+          BarcodeFormat.UPC_A,
+          BarcodeFormat.UPC_E,
+        ]);
+        const lettore = new BrowserMultiFormatOneDReader(formati);
         controllo = await lettore.decodeFromVideoDevice(
           undefined,
           video.current,
@@ -68,6 +95,7 @@ function Fotocamera({ rilevato }: { rilevato: (codice: string) => void }) {
     return () => {
       annullato = true;
       controllo?.stop();
+      ripristinaLog?.();
     };
   }, [rilevato, tentativo]);
   return (
