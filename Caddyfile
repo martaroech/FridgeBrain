@@ -1,0 +1,10 @@
+{
+	# Certificati generati localmente, senza contattare autorità pubbliche.
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+https://{$FRIDGEBRAIN_DOMINIO_HTTPS:localhost} {
+	tls internal
+	reverse_proxy fridgebrain:3000
+}

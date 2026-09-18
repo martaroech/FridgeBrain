@@ -1,0 +1,85 @@
+name: fridgebrain
+
+services:
+  https:
+    profiles: [https]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      fridgebrain:
+        condition: service_healthy
+    environment:
+      FRIDGEBRAIN_DOMINIO_HTTPS: "${FRIDGEBRAIN_DOMINIO_HTTPS:-localhost}"
+    ports:
+      - "${FRIDGEBRAIN_HTTPS_INDIRIZZO:-127.0.0.1}:${FRIDGEBRAIN_HTTPS_PORTA:-8443}:443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - type: bind
+        source: ./data/caddy/data
+        target: /data
+      - type: bind
+        source: ./data/caddy/config
+        target: /config
+    security_opt:
+      - no-new-privileges:true
+
+  fridgebrain:
+    image: fridgebrain:locale
+    build:
+      context: .
+      target: esecuzione
+    init: true
+    restart: unless-stopped
+    user: "${FRIDGEBRAIN_UID:-1000}:${FRIDGEBRAIN_GID:-1000}"
+    ports:
+      - "${FRIDGEBRAIN_INDIRIZZO:-127.0.0.1}:${FRIDGEBRAIN_PORTA:-3000}:3000"
+    environment:
+      FRIDGEBRAIN_DATI: /app/data
+      FRIDGEBRAIN_CATALOGO: /app/catalogo/foods.db
+      FRIDGEBRAIN_GENERATORE: "${FRIDGEBRAIN_GENERATORE:-disabilitato}"
+      FRIDGEBRAIN_OLLAMA_URL: "${FRIDGEBRAIN_OLLAMA_DOCKER_URL:-http://host.docker.internal:11434}"
+      FRIDGEBRAIN_MODELLO: "${FRIDGEBRAIN_MODELLO:-qwen3:8b}"
+      FRIDGEBRAIN_ORIGINI: "${FRIDGEBRAIN_ORIGINI:-http://localhost:3000,http://127.0.0.1:3000}"
+      TZ: Europe/Rome
+    volumes:
+      - type: bind
+        source: ./data/personali
+        target: /app/data
+      - type: bind
+        source: ./data/processed
+        target: /app/catalogo
+        read_only: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  importazione:
+    profiles: [strumenti]
+    image: fridgebrain:locale
+    build:
+      context: .
+      target: esecuzione
+    user: "${FRIDGEBRAIN_UID:-1000}:${FRIDGEBRAIN_GID:-1000}"
+    entrypoint: [python3, /app/scripts/costruisci_database_alimenti.py]
+    command: [--campione]
+    network_mode: none
+    volumes:
+      - type: bind
+        source: ./data/raw
+        target: /app/data/raw
+        read_only: true
+      - type: bind
+        source: ./data/processed
+        target: /app/data/processed
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      disable: true
