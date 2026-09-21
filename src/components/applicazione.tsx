@@ -188,13 +188,13 @@ export function Applicazione() {
               <div className="avviso" role="status">
                 <ShieldCheck size={22} />
                 <div>
-                  <strong>Server di casa non raggiungibile.</strong>
+                  <strong>Server non raggiungibile.</strong>
                   <p>
                     Stai consultando una copia
                     {stato.aggiornato_il
                       ? ` del ${new Date(stato.aggiornato_il).toLocaleString("it-IT")}`
                       : " salvata"}
-                    . Le modifiche richiedono la rete locale.
+                    . Le modifiche richiedono il collegamento al server.
                   </p>
                   <button
                     className="pulsante testuale"
@@ -208,16 +208,6 @@ export function Applicazione() {
                     Aggiorna connessione
                   </button>
                 </div>
-              </div>
-            )}
-            {!stato.catalogo_disponibile && (
-              <div className="avviso avviso-catalogo">
-                <Package size={21} />
-                <span>
-                  Catalogo alimentare non disponibile. Puoi aggiungere prodotti
-                  personalizzati; prepara il catalogo sul server per cercare i
-                  barcode.
-                </span>
               </div>
             )}
             {pagina === "home" && (
@@ -266,7 +256,7 @@ export function Applicazione() {
       <footer className="piè-pagina">
         <span>
           <ShieldCheck size={15} />
-          La tua cucina. I tuoi dati. A casa tua.
+          La tua cucina. I tuoi dati. Sempre con te.
         </span>
         <span>FridgeBrain · V1</span>
       </footer>

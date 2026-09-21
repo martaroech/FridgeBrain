@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renameSync, writeFileSync } from "node:fs";
 import { preferenzeIniziali, scortaInEsaurimento } from "../src/lib/motore";
 import {
   ArchivioFridgeBrain,
@@ -25,13 +24,9 @@ test("venti barcode del sample restituiscono il prodotto esatto e tutti i nutrie
     assert.equal(trovato.ingredients_text, atteso.ingredients_text);
     assert.deepEqual(trovato.allergens_tags, atteso.allergens_tags);
   }
-  assert.throws(
-    () => archivio.database.catalogo()!.exec("DELETE FROM prodotti"),
-    /readonly/i,
-  );
 });
 
-test("ricerca testuale indicizzata gestisce prefissi, marca e punteggiatura senza errori SQL", (contesto) => {
+test("ricerca testuale in cache gestisce prefissi, marca e punteggiatura senza errori SQL", (contesto) => {
   const { archivio } = preparaArchivio(contesto);
   const atteso = prodottiSample[0];
   const parola = atteso.product_name.match(/[\p{L}\p{N}]{3,}/u)![0];
@@ -48,8 +43,8 @@ test("ricerca testuale indicizzata gestisce prefissi, marca e punteggiatura senz
   assert.deepEqual(archivio.cercaProdotti('"* ()'), []);
 });
 
-test("aggiunta, modifica posizione, data e quantità conservano lo snapshot indipendente dal catalogo", (contesto) => {
-  const { archivio, percorsoCatalogo } = preparaArchivio(contesto);
+test("aggiunta, modifica posizione, data e quantità conservano lo snapshot indipendente dalla cache", (contesto) => {
+  const { archivio } = preparaArchivio(contesto);
   const prodotto = prodottiSample[0];
   const voce = archivio.aggiungiInventario({
     codice: prodotto.code,
@@ -68,10 +63,8 @@ test("aggiunta, modifica posizione, data e quantità conservano lo snapshot indi
   assert.equal(modificata.quantita, 300);
   assert.equal(modificata.posizione, "Freezer");
   assert.equal(modificata.scadenza, null);
-  // Rinomina consentita dopo aver chiuso esplicitamente la connessione di sola lettura.
-  archivio.database.chiudiCatalogo();
-  renameSync(percorsoCatalogo, `${percorsoCatalogo}.vecchio`);
-  assert.equal(archivio.stato().catalogo_disponibile, false);
+  archivio.database.personale.exec("DELETE FROM cache_prodotti_off");
+  assert.equal(archivio.stato().catalogo_disponibile, true);
   assert.equal(
     archivio.voce(voce.id).prodotto.product_name,
     prodotto.product_name,
@@ -82,7 +75,7 @@ test("aggiunta, modifica posizione, data e quantità conservano lo snapshot indi
   );
 });
 
-test("prodotti personalizzati funzionano senza foods.db e distinguono nutrienti mancanti da zero", (contesto) => {
+test("prodotti personalizzati funzionano senza cache OFF e distinguono nutrienti mancanti da zero", (contesto) => {
   const { archivio } = preparaArchivio(contesto, false);
   const prodotto = archivio.salvaProdotto({
     code: "00001234",
@@ -95,10 +88,10 @@ test("prodotti personalizzati funzionano senza foods.db e distinguono nutrienti 
   assert.equal(prodotto.nutriments?.fat_100g, undefined);
   const voce = archivio.aggiungiInventario({ codice: prodotto.code });
   assert.equal(voce.quantita, null);
-  assert.equal(archivio.stato().catalogo_disponibile, false);
+  assert.equal(archivio.stato().catalogo_disponibile, true);
   assert.throws(
     () => archivio.prodotto("99999999"),
-    (errore) => errore instanceof ErroreApplicazione && errore.stato === 503,
+    (errore) => errore instanceof ErroreApplicazione && errore.stato === 404,
   );
 });
 
@@ -173,8 +166,8 @@ test("quantità non misurata permette consumo totale ma impedisce quello parzial
   assert.equal(archivio.inventario().length, 0);
 });
 
-test("ricevuta aggiunta resta valida senza catalogo e una chiave nuova consente un acquisto uguale", (contesto) => {
-  const { archivio, percorsoCatalogo } = preparaArchivio(contesto);
+test("ricevuta aggiunta resta valida senza cache e una chiave nuova consente un acquisto uguale", (contesto) => {
+  const { archivio } = preparaArchivio(contesto);
   const dati = {
     codice: prodottiSample[0].code,
     confezioni: 2,
@@ -182,8 +175,7 @@ test("ricevuta aggiunta resta valida senza catalogo e una chiave nuova consente 
     unita: "g",
   };
   const prima = archivio.aggiungiInventario(dati, "acquisto-uno");
-  archivio.database.chiudiCatalogo();
-  renameSync(percorsoCatalogo, `${percorsoCatalogo}.vecchio`);
+  archivio.database.personale.exec("DELETE FROM cache_prodotti_off");
   assert.deepEqual(
     archivio.aggiungiInventario(
       {
@@ -202,7 +194,7 @@ test("ricevuta aggiunta resta valida senza catalogo e una chiave nuova consente 
       archivio.aggiungiInventario({ ...dati, quantita: 600 }, "acquisto-uno"),
     /dati diversi/,
   );
-  renameSync(`${percorsoCatalogo}.vecchio`, percorsoCatalogo);
+  for (const prodotto of prodottiSample) archivio.salvaCacheOff(prodotto);
   const seconda = archivio.aggiungiInventario(dati, "acquisto-due");
   assert.notEqual(seconda.id, prima.id);
   assert.equal(archivio.inventario().length, 2);
@@ -213,7 +205,7 @@ test("una creazione fallita non prenota la chiave e non ostacola il tentativo co
   const dati = { codice: prodottoProva.code, quantita: 400, unita: "g" };
   assert.throws(
     () => archivio.aggiungiInventario(dati, "creazione-da-riprovare"),
-    /catalogo/,
+    /non trovato/,
   );
   archivio.salvaProdotto(prodottoProva);
   const voce = archivio.aggiungiInventario(dati, "creazione-da-riprovare");
@@ -295,12 +287,12 @@ test("lista della spesa riordina la spunta e salva preferenze con limiti verific
   );
 });
 
-test("catalogo corrotto lascia disponibili i dati personali", (contesto) => {
-  const { archivio, percorsoCatalogo } = preparaArchivio(contesto, false);
+test("cache vuota lascia disponibili i dati personali", (contesto) => {
+  const { archivio } = preparaArchivio(contesto, false);
   archivio.salvaProdotto(prodottoProva);
   const voce = archivio.aggiungiInventario({ codice: prodottoProva.code });
-  writeFileSync(percorsoCatalogo, "Questo non è un database.");
-  assert.equal(archivio.stato().catalogo_disponibile, false);
+  archivio.database.personale.exec("DELETE FROM cache_prodotti_off");
+  assert.equal(archivio.stato().catalogo_disponibile, true);
   assert.equal(archivio.voce(voce.id).prodotto.code, prodottoProva.code);
 });
 
@@ -465,7 +457,7 @@ test("le scorte minime sono esplicite, seguono il consumo e si possono disattiva
 });
 
 test("la migrazione delle scorte conserva l'inventario di un database versione 1", (contesto) => {
-  const { archivio, percorsoCatalogo } = preparaArchivio(contesto, false);
+  const { archivio } = preparaArchivio(contesto, false);
   archivio.salvaProdotto(prodottoProva);
   const voce = archivio.aggiungiInventario({
     codice: prodottoProva.code,
@@ -476,7 +468,6 @@ test("la migrazione delle scorte conserva l'inventario di un database versione 1
   );
   const aggiornato = new ArchivioFridgeBrain({
     percorsoDati: dirname(archivio.database.percorsoPersonale),
-    percorsoCatalogo,
   });
   try {
     assert.equal(aggiornato.voce(voce.id).quantita, 500);
@@ -488,7 +479,7 @@ test("la migrazione delle scorte conserva l'inventario di un database versione 1
     assert.equal(
       aggiornato.database.personale.prepare("PRAGMA user_version").get()
         ?.user_version,
-      2,
+      3,
     );
   } finally {
     aggiornato.chiudi();

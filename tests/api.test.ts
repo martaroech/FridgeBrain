@@ -9,6 +9,12 @@ import {
 } from "./supporto-archivio";
 import type { ArchivioFridgeBrain } from "../src/lib/servizi";
 
+process.env.FRIDGEBRAIN_UTENTE = "prova";
+process.env.FRIDGEBRAIN_PASSWORD = "password-solo-test-molto-lunga";
+const autorizzazione =
+  "Basic " +
+  Buffer.from("prova:password-solo-test-molto-lunga").toString("base64");
+
 function chiama(
   archivio: ArchivioFridgeBrain,
   percorso: string,
@@ -19,20 +25,23 @@ function chiama(
   return gestisciRichiesta(
     new Request(`http://localhost:3000/api/${percorso}`, {
       method: metodo,
-      headers: { "Content-Type": "application/json", ...intestazioni },
+      headers: {
+        authorization: autorizzazione,
+        "Content-Type": "application/json",
+        ...intestazioni,
+      },
       ...(dati !== undefined ? { body: JSON.stringify(dati) } : {}),
     }),
     archivio,
   );
 }
 
-test("API stato e salute funzionano senza catalogo e non espongono cache condivise", async (contesto) => {
+test("API stato e salute funzionano con cache vuota e non espongono cache condivise", async (contesto) => {
   const { archivio } = preparaArchivio(contesto, false);
   const salute = await chiama(archivio, "salute");
   assert.equal(salute.status, 200);
   assert.deepEqual(await salute.json(), {
     ok: true,
-    catalogo_disponibile: false,
   });
   assert.equal(salute.headers.get("cache-control"), "no-store");
   const stato = await (await chiama(archivio, "stato")).json();
@@ -40,8 +49,43 @@ test("API stato e salute funzionano senza catalogo e non espongono cache condivi
   assert.deepEqual(stato.posizioni, ["Frigorifero", "Freezer", "Dispensa"]);
   assert.equal(
     (await chiama(archivio, "prodotti?codice=99999999")).status,
-    503,
+    404,
   );
+});
+
+test("API aggiunge un barcode nuovo tramite OFF e ripete la ricevuta anche senza cache o rete", async (contesto) => {
+  let richieste = 0;
+  const { archivio } = preparaArchivio(contesto, false, {
+    richiediOff: async () => {
+      richieste++;
+      assert.equal(richieste, 1, "La ripetizione non deve contattare OFF");
+      return Response.json({ status: 1, product: prodottiSample[0] });
+    },
+  });
+  const dati = { codice: prodottiSample[0].code, quantita: 300 };
+  const intestazioni = { "idempotency-key": "acquisto-remoto" };
+  const prima = await chiama(
+    archivio,
+    "inventario",
+    "POST",
+    dati,
+    intestazioni,
+  );
+  assert.equal(prima.status, 201);
+  const salvata = await prima.json();
+  assert.equal(salvata.prodotto.product_name, prodottiSample[0].product_name);
+  archivio.database.personale.exec("DELETE FROM cache_prodotti_off");
+  const ripetuta = await chiama(
+    archivio,
+    "inventario",
+    "POST",
+    dati,
+    intestazioni,
+  );
+  assert.equal(ripetuta.status, 201);
+  assert.deepEqual(await ripetuta.json(), salvata);
+  assert.equal(archivio.inventario().length, 1);
+  assert.equal(richieste, 1);
 });
 
 test("API lookup conserva zeri iniziali e distingue prodotto assente e codice invalido", async (contesto) => {
@@ -210,7 +254,10 @@ test("API rifiuta richieste da origini esterne, JSON corrotto e corpi eccessivi"
   const corrotta = await gestisciRichiesta(
     new Request("http://localhost:3000/api/spesa", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        authorization: autorizzazione,
+        "content-type": "application/json",
+      },
       body: "{errato",
     }),
     archivio,
@@ -219,7 +266,7 @@ test("API rifiuta richieste da origini esterne, JSON corrotto e corpi eccessivi"
   const formatoErrato = await gestisciRichiesta(
     new Request("http://localhost:3000/api/spesa", {
       method: "POST",
-      headers: { "content-type": "text/plain" },
+      headers: { authorization: autorizzazione, "content-type": "text/plain" },
       body: '{"nome":"Intruso"}',
     }),
     archivio,
@@ -239,6 +286,7 @@ test("API accetta Host del browser quando Next usa un URL interno e rifiuta orig
       new Request("http://0.0.0.0:3100/api/spesa", {
         method: "POST",
         headers: {
+          authorization: autorizzazione,
           "content-type": "application/json",
           host: "127.0.0.1:3100",
           ...intestazioni,

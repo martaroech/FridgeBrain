@@ -9,13 +9,6 @@ import { DatabaseSync } from "node:sqlite";
 test("la cucina demo resta separata dai dati personali e una seconda esecuzione non la modifica", (contesto) => {
   const cartella = mkdtempSync(join(tmpdir(), "fridgebrain-demo-"));
   contesto.after(() => rmSync(cartella, { recursive: true, force: true }));
-  const catalogo = join(cartella, "catalogo.db");
-  const alimenti = new DatabaseSync(catalogo);
-  alimenti.exec(
-    "CREATE TABLE prodotti(code TEXT PRIMARY KEY,product_name TEXT,brands TEXT,dati TEXT)",
-  );
-  alimenti.close();
-  const catalogoPrima = readFileSync(catalogo);
   const esegui = () =>
     execFileSync(
       process.execPath,
@@ -28,7 +21,6 @@ test("la cucina demo resta separata dai dati personali e una seconda esecuzione 
         env: {
           ...process.env,
           FRIDGEBRAIN_DATI: join(cartella, "personali"),
-          FRIDGEBRAIN_CATALOGO: catalogo,
         },
         encoding: "utf8",
       },
@@ -76,7 +68,6 @@ test("la cucina demo resta separata dai dati personali e una seconda esecuzione 
     false,
   );
   assert.equal(existsSync(join(cartella, "data", "fridgebrain.db")), false);
-  assert.deepEqual(readFileSync(catalogo), catalogoPrima);
   const prima = readFileSync(percorsoDemo);
   assert.match(esegui(), /Nessun dato è stato modificato/);
   assert.deepEqual(readFileSync(percorsoDemo), prima);

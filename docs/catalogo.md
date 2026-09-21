@@ -1,101 +1,30 @@
-# Catalogo alimentare locale
+# Prodotti Open Food Facts e cache
 
-Il catalogo deriva esclusivamente dai file originali Open Food Facts in `data/raw/`. Python legge il flusso gzip riga per riga: non vengono salvate copie decompresse e non viene caricato l'intero dataset in memoria. Non sono necessarie dipendenze Python esterne né chiamate Internet.
+L'accesso runtime usa esclusivamente l'API pubblica v2 per barcode e la tabella SQLite personale `cache_prodotti_off`. Non sono richiesti import preliminari. Gli originali storici in `data/raw/` rimangono intatti e inutilizzati.
 
-## File identificati e analisi del sample
+## Contratto
 
-I file sono identificati automaticamente dalla dimensione, senza dipendere dal nome. L'opzione predefinita seleziona il più piccolo; `--completo` seleziona il più grande. Per directory contenenti altri dump usare `--origine`.
+`GET /api/prodotti?codice=...` conserva la risposta `Prodotto` esistente. Le corrispondenze esatte precedono gli alias GTIN verificati; a parità di codice il personalizzato precede la cache. Se manca il prodotto, `recuperaProdotto` interroga `/api/v2/product/{barcode}.json` con campi selezionati e User-Agent FridgeBrain configurabile. Richieste contemporanee dello stesso GTIN condividono il recupero.
 
-| Ruolo | File disponibile | Byte compressi |
-| --- | --- | ---: |
-| Sample | `data/raw/openfoodfacts-sample.jsonl.gz` | 1.414.002 |
-| Dump completo | `data/raw/openfoodfacts-full.jsonl.gz` | 12.891.694.064 |
+`cercaProdotti` interroga soltanto cache e personalizzati per nome, marca e codice con parametri SQL. Non chiama la ricerca remota OFF. `prodotto` resta sincrono per le transazioni d'inventario; il confine HTTP chiama il recupero asincrono prima dell'aggiunta. Le ricevute idempotenti già registrate restano utilizzabili anche svuotando la cache.
 
-Il sample contiene 485 oggetti JSON. Il campo `code` è sempre una stringa; `product_name` è presente in 458 record, ma può essere vuoto. `nutriments` è un oggetto in 399 record e contiene valori in 108; 144 prodotti hanno `ingredients`, 186 hanno `ingredients_text` (anche vuoto), 480 hanno `allergens_tags` (anche vuoto). La distinzione tra campo mancante, vuoto e valore esplicito è quindi necessaria.
+## Schema versione 3
 
-L'analisi automatica individua 99 prodotti con GTIN valido e nutrienti. Le 20 fixture in `tests/fixtures/prodotti_sample.json` sono estratte dal sample, privilegiando marca, ingredienti e allergeni. Non sono prodotti inventati. I barcode sono stringhe, mantengono gli zeri iniziali e superano la verifica della cifra di controllo GTIN.
+| Colonna         | Contenuto                                            |
+| --------------- | ---------------------------------------------------- |
+| `barcode`       | Chiave primaria testuale, mantiene gli zeri iniziali |
+| `dati`          | JSON normalizzato con campi originali OFF            |
+| `recuperato_il` | Primo recupero UTC                                   |
+| `aggiornato_il` | Ultima scrittura UTC                                 |
 
-```bash
-python scripts/analizza_sample.py
-python scripts/costruisci_database_alimenti.py --campione
-python -m unittest discover -s tests -p test_importazione.py -v
-```
+La migrazione è additiva. L'upsert conserva il primo recupero e aggiorna prodotto e data dell'ultima scrittura. Non vengono modificati snapshot d'inventario o ricette.
 
-`analizza_sample.py` riscrive soltanto il piccolo file delle fixture. Per selezionare un sample diverso: `python scripts/analizza_sample.py --origine data/raw/altro-sample.jsonl.gz`.
+La cache non scade automaticamente. Per un aggiornamento puntuale amministrativo, ferma l'app ed esegui un backup; con un client SQLite elimina soltanto `DELETE FROM cache_prodotti_off WHERE barcode='CODICE';`, poi riavvia e scansiona nuovamente. La ricerca successiva ripopola la riga. Non eliminare il database personale. Un'interfaccia di aggiornamento automatico della cache è fuori da questa migrazione.
 
-## Schema stabile del database
+## Validazione ed errori
 
-Il file generato predefinito è `data/processed/foods.db`.
+Codici numerici da 4 a 32 caratteri mantengono compatibilità con codici interni esistenti; soltanto GTIN con checksum valido generano alias. OFF deve restituire il codice richiesto o un alias ammesso e un nome non vuoto. Campi opzionali sono verificati per tipo; dati mancanti non diventano zero o assenze certificate. Il motore nutrizionale e le regole alimentari esistenti interpretano i dati.
 
-```sql
-CREATE TABLE prodotti (
-    code TEXT PRIMARY KEY,
-    product_name TEXT NOT NULL,
-    brands TEXT,
-    dati TEXT NOT NULL CHECK(json_valid(dati))
-);
-CREATE TABLE metadati (chiave TEXT PRIMARY KEY, valore TEXT NOT NULL);
-CREATE VIRTUAL TABLE ricerca_prodotti USING fts5(
-    product_name, brands, content='prodotti', content_rowid='rowid',
-    tokenize='unicode61 remove_diacritics 2'
-);
-```
+Tempo massimo 8 secondi inclusa lettura del corpo; massimo 2 MiB, redirect rifiutati. 400 codice non valido; 404 prodotto assente; 429 limite richieste con pausa di un minuto; 502 risposta non valida; 503 rete o servizio indisponibile; 504 timeout. Errori non salvati in cache e nessun retry automatico ripetuto. Il servizio ufficiale non richiede una chiave API per queste letture. Usare `FRIDGEBRAIN_OFF_USER_AGENT` con nome, versione e URL/contatto reale.
 
-La chiave primaria indicizza il lookup esatto del barcode. FTS5 indicizza nome e marca; la ricerca ignora gli accenti. Le interrogazioni devono sempre utilizzare parametri SQL.
-
-`dati` contiene un oggetto JSON con i nomi originali OFF: identità, quantità, porzione, categorie, paesi, ingredienti, analisi ingredienti, allergeni, tracce, etichette, nutrienti, Nutri-Score, gruppo NOVA e data di modifica. Sono conservati anche `product_quantity_unit`, `nutrition_data_per`, `nutrition_data_prepared_per`, `serving_quantity` e i valori originali `nutriments`, affinché l'app possa interpretare correttamente solidi, liquidi e prodotti preparati. Non vengono importate immagini, contributori o cronologia editoriale.
-
-`metadati` registra versione dello schema, origine, licenza dichiarata, data UTC dell'importazione e statistiche. La consultazione dell'applicazione usa il catalogo in sola lettura. I prodotti personalizzati appartengono al database personale `fridgebrain.db` e non al catalogo.
-
-## Qualità e politica di importazione
-
-- Riga JSON illeggibile, codifica non valida, valore non finito o struttura non oggetto: record ignorato e contato.
-- Barcode mancante, numerico anziché stringa o non composto da cifre ASCII: record ignorato. Non si tenta di ricostruire zeri iniziali perduti.
-- Nome mancante o vuoto: fallback a `product_name_it`, poi `product_name_en`; senza un nome utilizzabile il record è ignorato.
-- I codici numerici OFF non standard sono conservati: il controllo GTIN è obbligatorio per le fixture, non un filtro distruttivo dell'intero catalogo.
-- Campi del tipo errato: non vengono reinterpretati come dati validi.
-- Nutriente assente: resta assente, non diventa zero. I valori originali rimangono invariati; il motore nutrizionale valida il loro utilizzo.
-- `allergens_tags: []` rimane una lista vuota; il campo mancante resta mancante. Nessuno dei due significa certificazione di assenza di allergeni.
-- Barcode duplicato: vince l'ultima occorrenza del file. Le statistiche finali contano i prodotti effettivamente presenti.
-- Una singola riga superiore a 32 MiB viene scartata per limitare la memoria, senza interrompere le righe successive.
-
-Il gzip viene letto fino alla fine, così sono rilevati troncamenti e checksum non validi. I prodotti vengono inseriti in blocchi di 1.000, con cache SQLite di circa 32 MiB. Gli indici sono costruiti alla fine. Un catalogo temporaneo nella stessa directory viene verificato con `PRAGMA integrity_check`, sincronizzato su disco e sostituito atomicamente al precedente. Un gzip corrotto, un import senza prodotti o un errore impediscono la sostituzione. Non vengono mai modificati gli originali né `fridgebrain.db`.
-
-## Misure e test effettivi
-
-Prima elaborazione del sample, Windows e Python 3.14.7:
-
-| Misura | Risultato |
-| --- | ---: |
-| Prodotti analizzati | 485 |
-| Prodotti importati | 456 |
-| Ignorati senza nome | 29 |
-| Prodotti con nutrienti | 105 |
-| Prodotti con ingredienti | 139 |
-| Prodotti con allergeni dichiarati | 84 |
-| Dimensione database con indici | 1.372.160 byte |
-| Durata dell'importazione | 0,148 secondi |
-| 2.000 lookup reali con parsing e confronti | 0,580 secondi |
-| Media per lookup compreso il controllo | 0,290 millisecondi |
-
-Sono misure indicative della macchina locale, non una garanzia sui dump completi. La suite verifica import compresso, record corrotti, codifica, dati mancanti, dati inconsistenti, duplicati, GTIN, nutrienti e unità, ingredienti, allergeni, indici, integrità, conservazione del database precedente e isolamento del database personale. Verifica ogni fixture contro nome, barcode e dati originali, ed esegue altri 2.000 lookup contro il sample originale quando disponibile. In CI senza dataset originali rimangono eseguibili tutte le verifiche sintetiche e quelle sulle fixture reali compresse al momento del test.
-
-## Elaborazione del dump completo e aggiornamenti
-
-Dopo il successo dei test sul sample e nella fase finale di preparazione del progetto:
-
-```bash
-python scripts/costruisci_database_alimenti.py --completo
-```
-
-Con origine o destinazione esplicite:
-
-```bash
-python scripts/costruisci_database_alimenti.py --origine data/raw/nuovo-dump.jsonl.gz --destinazione data/processed/foods.db
-```
-
-Prevedere spazio libero per il nuovo database e gli indici, oltre al catalogo precedente finché non termina la sostituzione. L'importazione completa può richiedere diversi minuti o più a seconda di CPU e disco. Ogni 50.000 record viene mostrato l'avanzamento; le statistiche definitive appaiono al termine.
-
-Arrestare il server prima di sostituire il catalogo, soprattutto su Windows, dove una connessione SQLite aperta può impedire la rinomina. Riavviare l'applicazione dopo l'aggiornamento. In Docker mantenere il catalogo nel volume persistente, senza includere dump o database nell'immagine.
-
-Il backup prioritario è il database personale `fridgebrain.db`; `foods.db` è rigenerabile. La directory `data/` resta esclusa da Git. Il catalogo contiene dati di Open Food Facts e ne conserva l'attribuzione: [Open Food Facts](https://world.openfoodfacts.org/). L'etichetta originale del prodotto resta il riferimento per allergeni e dichiarazioni del produttore.
+Riferimenti: [API OFF](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-cheatsheet/) e [regole di utilizzo](https://github.com/openfoodfacts/openfoodfacts-server/blob/main/docs/api/index.md). Nei test tutte le risposte sono simulate; venti fixture reali verificano nome, barcode, nutrienti, ingredienti e allergeni.

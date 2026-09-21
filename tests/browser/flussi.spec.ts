@@ -400,7 +400,7 @@ test("scanner con permesso negato e inserimento manuale sempre disponibile", asy
   });
 });
 
-test("PWA installabile e copia leggibile quando il server domestico è irraggiungibile", async ({
+test("PWA installabile senza copie personali consultabili quando il server è irraggiungibile", async ({
   page: pagina,
   context: contesto,
   request: richiesta,
@@ -421,32 +421,24 @@ test("PWA installabile e copia leggibile quando il server domestico è irraggiun
   const installabilita = await diagnostica.send("Page.getInstallabilityErrors");
   expect(installabilita.installabilityErrors).toEqual([]);
   await diagnostica.detach();
-  await expect
-    .poll(() =>
-      pagina.evaluate(async () => Boolean(await caches.match("/api/stato"))),
-    )
-    .toBe(true);
+  expect(
+    await pagina.evaluate(async () =>
+      Boolean(await caches.match("/api/stato")),
+    ),
+  ).toBe(false);
+  await pagina.reload();
   await contesto.setOffline(true);
   await pagina.reload();
-  await expect(pagina.getByText(/Stai consultando una copia/)).toBeVisible();
-  await vai(pagina, "Inventario");
+  await expect(
+    pagina.getByRole("heading", { name: "Connessione assente" }),
+  ).toBeVisible();
+  await expect(
+    pagina.getByText("Ceci lessati", { exact: true }),
+  ).not.toBeVisible();
+  await contesto.setOffline(false);
+  await pagina.getByRole("link", { name: "Riprova" }).click();
   await expect(
     pagina.getByRole("button", { name: "Apri Ceci lessati", exact: true }),
-  ).toBeVisible();
-  await vai(pagina, "Spesa");
-  await pagina.getByLabel("Cosa manca?").fill("Carote");
-  await pagina.getByRole("button", { name: "Aggiungi alla spesa" }).click();
-  await expect(pagina.getByRole("alert", { name: "Errore" })).toContainText(
-    "Stai consultando una copia offline",
-  );
-  await contesto.setOffline(false);
-  await pagina.getByRole("button", { name: "Aggiorna connessione" }).click();
-  await expect(
-    pagina.getByText("Server di casa non raggiungibile.", { exact: true }),
-  ).not.toBeVisible();
-  await pagina.getByRole("button", { name: "Aggiungi alla spesa" }).click();
-  await expect(
-    pagina.getByRole("checkbox", { name: "Segna acquistato: Carote" }),
   ).toBeVisible();
 });
 
@@ -556,7 +548,7 @@ test("fotocamera: decodifica EAN reale, evita doppie letture e riparte per un al
   expect(ricerche).toBe(2);
 });
 
-test("tutti i flussi locali bloccano qualsiasi richiesta Internet", async ({
+test("il browser comunica solo con FridgeBrain anche usando prodotti OFF", async ({
   page: pagina,
   context: contesto,
 }) => {

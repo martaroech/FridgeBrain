@@ -512,7 +512,10 @@ export function Aggiunta({
       <div className="testata-pagina">
         <p className="soprattitolo">Dal sacchetto al frigorifero</p>
         <h1>Aggiungi un prodotto</h1>
-        <p>Inquadra il codice a barre. Lo cerchiamo nel tuo catalogo locale.</p>
+        <p>
+          Inquadra il codice a barre. Lo cerchiamo tra i prodotti salvati e su
+          Open Food Facts.
+        </p>
       </div>
       <div className="scanner-griglia">
         <div>
@@ -586,8 +589,8 @@ export function Aggiunta({
             </div>
           )}
           <p className="nota nota-privata">
-            Il catalogo e i tuoi dati restano a casa tua. Nessuna ricerca su
-            Internet.
+            I prodotti già riconosciuti sono salvati sul tuo server. Per un
+            nuovo barcode consultiamo Open Food Facts.
           </p>
         </div>
       </div>

@@ -1,6 +1,6 @@
 {
   "id": "/", "name": "FridgeBrain", "short_name": "FridgeBrain", "lang": "it",
-  "description": "La tua cucina, in ordine. Inventario, scadenze, ricette e spesa a casa tua.",
+  "description": "La tua cucina, in ordine. Inventario, scadenze, ricette e spesa sempre con te.",
   "start_url": "/", "scope": "/", "display": "standalone",
   "background_color": "#f7f8f2", "theme_color": "#204d37",
   "icons": [

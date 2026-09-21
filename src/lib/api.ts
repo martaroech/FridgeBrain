@@ -4,6 +4,8 @@ import {
   archivioApplicazione,
 } from "./servizi";
 
+import { verificaAccesso } from "./autenticazione";
+
 function risposta(dati: unknown, stato = 200): Response {
   return Response.json(dati, {
     status: stato,
@@ -52,7 +54,7 @@ function verificaOrigine(richiesta: Request): void {
     richiesta.headers.get("sec-fetch-site") === "cross-site"
   )
     throw new ErroreApplicazione(
-      "Richiesta rifiutata: apri FridgeBrain direttamente dal suo indirizzo locale.",
+      "Richiesta rifiutata: apri FridgeBrain direttamente dal suo indirizzo.",
       403,
     );
 }
@@ -100,6 +102,13 @@ export async function gestisciRichiesta(
   archivioFornito?: ArchivioFridgeBrain,
 ): Promise<Response> {
   try {
+    if (
+      new URL(richiesta.url).pathname === "/api/salute" &&
+      richiesta.method === "GET"
+    )
+      return risposta({ ok: true });
+    const rifiuto = verificaAccesso(richiesta);
+    if (rifiuto) return rifiuto;
     verificaOrigine(richiesta);
     const indirizzo = new URL(richiesta.url);
     const segmenti = indirizzo.pathname
@@ -112,18 +121,15 @@ export async function gestisciRichiesta(
       throw new ErroreApplicazione("Indirizzo non trovato.", 404);
     const metodo = richiesta.method;
     const archivio = archivioFornito ?? archivioApplicazione();
-    if (risorsa === "salute" && segmenti.length === 1 && metodo === "GET")
-      return risposta({
-        ok: true,
-        catalogo_disponibile: Boolean(archivio.database.catalogo()),
-      });
     if (risorsa === "stato" && segmenti.length === 1 && metodo === "GET")
       return risposta(archivio.stato());
     if (risorsa === "prodotti" && !azione) {
       if (metodo === "GET" && !identificatore)
         return risposta(
           indirizzo.searchParams.has("codice")
-            ? archivio.prodotto(indirizzo.searchParams.get("codice"))
+            ? await archivio.recuperaProdotto(
+                indirizzo.searchParams.get("codice"),
+              )
             : archivio.cercaProdotti(indirizzo.searchParams.get("q") ?? ""),
         );
       if (metodo === "POST" && !identificatore)
@@ -147,14 +153,19 @@ export async function gestisciRichiesta(
     if (risorsa === "inventario") {
       if (!identificatore && metodo === "GET")
         return risposta(archivio.inventario());
-      if (!identificatore && metodo === "POST")
-        return risposta(
-          archivio.aggiungiInventario(
-            await leggiCorpo(richiesta),
-            richiesta.headers.get("idempotency-key") ?? undefined,
-          ),
-          201,
-        );
+      if (!identificatore && metodo === "POST") {
+        const dati = await leggiCorpo(richiesta);
+        const chiave = richiesta.headers.get("idempotency-key") ?? undefined;
+        // La ricevuta già registrata resta utilizzabile anche se la cache viene svuotata.
+        const registrata =
+          chiave &&
+          archivio.database.personale
+            .prepare("SELECT chiave FROM operazioni WHERE chiave=?")
+            .get(chiave);
+        if (!registrata && dati && typeof dati === "object" && "codice" in dati)
+          await archivio.recuperaProdotto(dati.codice);
+        return risposta(archivio.aggiungiInventario(dati, chiave), 201);
+      }
       if (identificatore && !azione && metodo === "GET")
         return risposta(archivio.voce(identifica(identificatore)));
       if (identificatore && !azione && metodo === "PATCH")

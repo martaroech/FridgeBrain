@@ -1,10 +1,4 @@
-{
-	# Certificati generati localmente, senza contattare autorità pubbliche.
-	auto_https disable_redirects
-	skip_install_trust
-}
-
-https://{$FRIDGEBRAIN_DOMINIO_HTTPS:localhost} {
-	tls internal
-	reverse_proxy fridgebrain:3000
+{$FRIDGEBRAIN_DOMINIO} {
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy fridgebrain:3000
 }

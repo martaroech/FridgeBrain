@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { ConfigurazioneArchivio } from "../src/lib/database";
 import type { TestContext } from "node:test";
 import { ArchivioFridgeBrain } from "../src/lib/servizi";
 import type { Prodotto } from "../src/lib/tipi";
@@ -27,36 +27,22 @@ export const prodottoProva: Prodotto = {
   },
 };
 
-export function preparaArchivio(contesto: TestContext, conCatalogo = true) {
+export function preparaArchivio(
+  contesto: TestContext,
+  conCache = true,
+  configurazione: ConfigurazioneArchivio = {},
+) {
   const cartella = mkdtempSync(join(tmpdir(), "fridgebrain-test-"));
-  const percorsoCatalogo = join(cartella, "foods.db");
-  if (conCatalogo) {
-    const catalogo = new DatabaseSync(percorsoCatalogo);
-    catalogo.exec(
-      "CREATE TABLE prodotti(code TEXT PRIMARY KEY,product_name TEXT,brands TEXT,dati TEXT); CREATE VIRTUAL TABLE ricerca_prodotti USING fts5(product_name,brands,content='prodotti',content_rowid='rowid');",
-    );
-    const inserisci = catalogo.prepare(
-      "INSERT INTO prodotti(code,product_name,brands,dati) VALUES (?,?,?,?)",
-    );
-    for (const prodotto of prodottiSample)
-      inserisci.run(
-        prodotto.code,
-        prodotto.product_name,
-        prodotto.brands ?? "",
-        JSON.stringify(prodotto),
-      );
-    catalogo.exec(
-      "INSERT INTO ricerca_prodotti(ricerca_prodotti) VALUES ('rebuild')",
-    );
-    catalogo.close();
-  }
   const archivio = new ArchivioFridgeBrain({
     percorsoDati: join(cartella, "personale"),
-    percorsoCatalogo,
+    richiediOff: async () => Response.json({ status: 0 }),
+    ...configurazione,
   });
+  if (conCache)
+    for (const prodotto of prodottiSample) archivio.salvaCacheOff(prodotto);
   contesto.after(() => {
     archivio.chiudi();
     rmSync(cartella, { recursive: true, force: true });
   });
-  return { archivio, cartella, percorsoCatalogo };
+  return { archivio, cartella };
 }

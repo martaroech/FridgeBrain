@@ -16,6 +16,8 @@ import {
   validaRicetta,
 } from "./motore";
 
+import { recuperaDaOff, ErroreOpenFoodFacts } from "./open-food-facts";
+
 type Oggetto = Record<string, unknown>;
 type Riga = Record<string, unknown>;
 const nutrienti = [
@@ -348,7 +350,7 @@ export function generatoreConfigurato(): StatoApplicazione["generatore"] {
 
 export class ArchivioFridgeBrain {
   readonly database: DatabaseFridgeBrain;
-  constructor(configurazione: ConfigurazioneArchivio = {}) {
+  constructor(private readonly configurazione: ConfigurazioneArchivio = {}) {
     this.database = new DatabaseFridgeBrain(configurazione);
   }
 
@@ -398,7 +400,7 @@ export class ArchivioFridgeBrain {
       ricette: this.ricette(),
       preferenze: this.preferenze(),
       posizioni: this.posizioni(),
-      catalogo_disponibile: Boolean(this.database.catalogo()),
+      catalogo_disponibile: true,
       generatore: generatoreConfigurato(),
     };
   }
@@ -453,37 +455,69 @@ export class ArchivioFridgeBrain {
     });
   }
 
+  private richiesteOff = new Map<string, Promise<Prodotto>>();
+  private riprendiOffDal = 0;
+
+  salvaCacheOff(prodotto: Prodotto): void {
+    const adesso = new Date().toISOString();
+    this.database.personale
+      .prepare(
+        "INSERT INTO cache_prodotti_off(barcode,dati,recuperato_il,aggiornato_il) VALUES (?,?,?,?) ON CONFLICT(barcode) DO UPDATE SET dati=excluded.dati,aggiornato_il=excluded.aggiornato_il",
+      )
+      .run(prodotto.code, JSON.stringify(prodotto), adesso, adesso);
+  }
+
+  /** Lookup sincrono dei dati noti: mantiene atomiche le operazioni d'inventario. */
   prodotto(codiceRichiesto: unknown): Prodotto {
     const codice = validaCodice(codiceRichiesto);
-    const personale = this.database.personale
-      .prepare("SELECT dati FROM prodotti_personalizzati WHERE codice=?")
-      .get(codice);
-    if (personale) return JSON.parse(String(personale.dati));
-    const catalogo = this.database.catalogo();
-    const riga = catalogo
-      ?.prepare("SELECT dati FROM prodotti WHERE code=?")
-      .get(codice);
-    if (riga) return JSON.parse(String(riga.dati));
-    // Prima le corrispondenze esatte in entrambi gli archivi, poi gli alias verificati.
-    for (const equivalente of codiciGtinEquivalenti(codice)) {
-      const trovato =
+    for (const candidato of [codice, ...codiciGtinEquivalenti(codice)]) {
+      const riga =
         this.database.personale
           .prepare("SELECT dati FROM prodotti_personalizzati WHERE codice=?")
-          .get(equivalente) ??
-        catalogo
-          ?.prepare("SELECT dati FROM prodotti WHERE code=?")
-          .get(equivalente);
-      if (trovato) return JSON.parse(String(trovato.dati));
+          .get(candidato) ??
+        this.database.personale
+          .prepare("SELECT dati FROM cache_prodotti_off WHERE barcode=?")
+          .get(candidato);
+      if (riga) return JSON.parse(String(riga.dati));
     }
-    if (!catalogo)
-      throw new ErroreApplicazione(
-        "Il catalogo alimentare non è disponibile. Prepara foods.db oppure inserisci un prodotto manualmente.",
-        503,
-      );
     throw new ErroreApplicazione(
       "Prodotto non trovato. Puoi inserirlo manualmente.",
       404,
     );
+  }
+
+  async recuperaProdotto(codiceRichiesto: unknown): Promise<Prodotto> {
+    const codice = validaCodice(codiceRichiesto);
+    try {
+      return this.prodotto(codice);
+    } catch (errore) {
+      if (!(errore instanceof ErroreApplicazione) || errore.stato !== 404)
+        throw errore;
+    }
+    const equivalenti = codiciGtinEquivalenti(codice);
+    const chiave = [codice, ...equivalenti].sort()[0];
+    const pendente = this.richiesteOff.get(chiave);
+    if (pendente) return pendente;
+    if (Date.now() < this.riprendiOffDal)
+      throw new ErroreApplicazione(
+        "Open Food Facts ha raggiunto il limite di richieste. Attendi qualche minuto e riprova.",
+        429,
+      );
+    const richiesta = recuperaDaOff(codice, equivalenti, this.configurazione)
+      .then((prodotto) => {
+        this.salvaCacheOff(prodotto);
+        return prodotto;
+      })
+      .catch((errore: unknown) => {
+        if (errore instanceof ErroreOpenFoodFacts) {
+          if (errore.stato === 429) this.riprendiOffDal = Date.now() + 60_000;
+          throw new ErroreApplicazione(errore.message, errore.stato);
+        }
+        throw errore;
+      })
+      .finally(() => this.richiesteOff.delete(chiave));
+    this.richiesteOff.set(chiave, richiesta);
+    return richiesta;
   }
 
   cercaProdotti(valore: unknown): Prodotto[] {
@@ -491,38 +525,14 @@ export class ArchivioFridgeBrain {
     if (ricerca.length < 2) return [];
     const risultati = new Map<string, Prodotto>();
     const modello = `%${ricerca.replace(/[\\%_]/g, "\\$&")}%`;
-    const personali = this.database.personale
-      .prepare(
-        "SELECT dati FROM prodotti_personalizzati WHERE json_extract(dati,'$.product_name') LIKE ? ESCAPE '\\' OR json_extract(dati,'$.brands') LIKE ? ESCAPE '\\' OR codice=? LIMIT 30",
-      )
-      .all(modello, modello, ricerca);
-    for (const riga of personali) {
-      const prodotto = JSON.parse(String(riga.dati)) as Prodotto;
-      risultati.set(prodotto.code, prodotto);
-    }
-    const catalogo = this.database.catalogo();
-    if (!catalogo) return [...risultati.values()];
-    if (/^\d{4,32}$/.test(ricerca)) {
-      const trovato = catalogo
-        .prepare("SELECT dati FROM prodotti WHERE code=?")
-        .get(ricerca);
-      if (trovato) {
-        const prodotto = JSON.parse(String(trovato.dati)) as Prodotto;
-        if (!risultati.has(prodotto.code))
-          risultati.set(prodotto.code, prodotto);
-      }
-    }
-    const parole = ricerca.match(/[\p{L}\p{N}]+/gu) ?? [];
-    if (parole.length) {
-      const espressione = parole
-        .slice(0, 12)
-        .map((parola) => `"${parola}"*`)
-        .join(" AND ");
-      const righe = catalogo
+    for (const tabella of ["prodotti_personalizzati", "cache_prodotti_off"]) {
+      const codice =
+        tabella === "prodotti_personalizzati" ? "codice" : "barcode";
+      const righe = this.database.personale
         .prepare(
-          "SELECT p.dati FROM ricerca_prodotti r JOIN prodotti p ON p.rowid=r.rowid WHERE ricerca_prodotti MATCH ? ORDER BY rank LIMIT 30",
+          `SELECT dati FROM ${tabella} WHERE json_extract(dati,'$.product_name') LIKE ? ESCAPE '\\' OR json_extract(dati,'$.brands') LIKE ? ESCAPE '\\' OR ${codice}=? LIMIT 30`,
         )
-        .all(espressione);
+        .all(modello, modello, ricerca);
       for (const riga of righe) {
         const prodotto = JSON.parse(String(riga.dati)) as Prodotto;
         if (!risultati.has(prodotto.code))

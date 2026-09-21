@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "FridgeBrain · La tua cucina, con più cura",
   description:
-    "Il tuo inventario alimentare, le scadenze e le ricette. Tutto a casa tua.",
+    "Il tuo inventario alimentare, le scadenze e le ricette. Sempre con te.",
   icons: { icon: "/marchio.svg", apple: "/icone/apple-touch-icon.png" },
   manifest: "/manifest.webmanifest",
   appleWebApp: {

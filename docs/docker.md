@@ -1,132 +1,56 @@
-# Avvio con Docker
+# Deployment pubblico con Docker e Caddy
 
-Il progetto usa un'immagine costruita in più fasi: Node.js 24 compila Next.js, mentre l'immagine finale contiene soltanto l'applicazione standalone, le risorse locali e Python per l'importazione del catalogo. Il gestore pnpm 11.19.0 usa il lockfile con `--frozen-lockfile`. I dump, i database e le dipendenze installate sul computer sono esclusi dal contesto di build tramite `.dockerignore`.
+## Preparazione Linux/VPS
 
-## Prerequisiti
-
-- Docker Engine con Docker Compose oppure Docker Desktop con contenitori Linux avviato.
-- Internet per il primo download delle immagini e delle dipendenze durante la build. Dopo la preparazione, l'uso dell'applicazione e l'importazione funzionano senza Internet.
-- Spazio per immagini, catalogo e database personale.
-- Per il riconoscimento dei prodotti, un `foods.db` generato dal sample o dal dump; l'applicazione si avvia anche senza catalogo e permette prodotti personalizzati.
-
-Su Windows verificare che Docker Desktop usi il motore Linux/WSL 2. Il comando `docker version` deve mostrare sia Client sia Server. L'errore relativo a `dockerDesktopLinuxEngine` indica solitamente che il motore non è ancora avviato.
-
-## Avvio ordinario
-
-Dalla radice del repository:
+1. Installa Docker Engine con Compose e copia la repository sul server.
+2. Configura un nome DNS, ad esempio `cucina.example.org`, verso l'IP pubblico del VPS. Se pubblichi un record AAAA anche IPv6 deve raggiungere il server.
+3. Consenti TCP 80 e 443 nel firewall. Non esporre 3000 né la porta Ollama.
+4. Copia `.env.example` in `.env`. Imposta dominio senza protocollo, utente, password casuale (almeno 20 caratteri) e User-Agent OFF con contatto reale. Non aggiungere `.env` a Git.
+5. Prepara i volumi:
 
 ```bash
-docker compose up -d
+mkdir -p data/personali data/caddy/data data/caddy/config
+sudo chown -R 1000:1000 data/personali
+chmod 600 .env
+docker compose up -d --build
 docker compose ps
 ```
 
-La prima esecuzione costruisce l'immagine. Aprire [FridgeBrain locale](http://localhost:3000). Il controllo di salute interroga `/api/salute`; il catalogo assente non rende indisponibile l'app.
+Il UID/GID della directory personale deve coincidere con `FRIDGEBRAIN_UID` e `FRIDGEBRAIN_GID`. Copia un eventuale backup esistente in `data/personali/fridgebrain.db` **prima dell'avvio**, senza vecchi WAL. L'app aggiunge automaticamente la tabella cache preservando i dati personali.
 
-Il servizio predefinito pubblica la porta soltanto su `127.0.0.1`. Per fermarlo: `docker compose stop`. Per rimuovere il contenitore senza perdere i dati: `docker compose down`.
+Apri il dominio HTTPS dal telefono e inserisci le credenziali nella richiesta del browser. Puoi installare la PWA e concedere il permesso della fotocamera. Il dominio deve essere pubblico e raggiungibile: un nome di esempio non può ottenere un certificato valido. [Requisiti HTTPS automatico Caddy](https://caddyserver.com/docs/automatic-https).
 
-Su Linux preparare le directory prima dell'avvio e assegnarle all'utente che esegue FridgeBrain:
+## Architettura e persistenza
 
-```bash
-mkdir -p data/personali data/processed
-```
+Caddy è il punto d'ingresso pubblico, con redirect HTTP→HTTPS, certificati automatici e HSTS. L'app ascolta su 3000 nella rete privata Compose, senza porta pubblicata sull'host. L'autenticazione viene comunque verificata anche dall'app. Caddy non registra le credenziali nei log di accesso: non è abilitato un access log dedicato.
 
-I valori predefiniti del processo sono UID e GID 1000. Se l'utente locale usa identificativi diversi, impostare `FRIDGEBRAIN_UID` e `FRIDGEBRAIN_GID` nel file `.env` ai valori restituiti da `id -u` e `id -g`. Le directory devono essere scrivibili da questo utente. Docker Desktop gestisce la condivisione dei percorsi Windows senza richiedere `chown`.
+| Directory host      | Destinazione       | Contenuto                                     |
+| ------------------- | ------------------ | --------------------------------------------- |
+| `data/personali`    | `/app/data`        | SQLite personale, cache OFF, eventuali backup |
+| `data/caddy/data`   | `/data` di Caddy   | Certificati e stato TLS                       |
+| `data/caddy/config` | `/config` di Caddy | Configurazione persistente Caddy              |
 
-## Archivi e persistenza
+L'immagine usa Node 24, build Next standalone e utente non privilegiato. Python resta disponibile solo per il backup consistente. Dipendenze installate con lockfile pnpm; dati, segreti, fixture e dump esclusi dal contesto tramite `.dockerignore`. Una ricostruzione dell'immagine non cancella i volumi.
 
-| Dato sul computer | Percorso nel contenitore | Accesso dell'app |
-| --- | --- | --- |
-| `data/personali/fridgebrain.db` | `/app/data/fridgebrain.db` | Lettura e scrittura |
-| `data/processed/foods.db` | `/app/catalogo/foods.db` | Sola lettura |
-| `data/raw/*.jsonl.gz` | Non montato nell'app | Nessuno |
+Il processo risponde a `/api/salute` senza esporre dati personali. Per verificare la configurazione autenticata, apri anche la Home: la salute del processo da sola non prova la correttezza delle credenziali.
 
-L'esecuzione Docker usa `data/personali`, mentre lo sviluppo locale usa per impostazione iniziale `data/fridgebrain.db`. Questa separazione evita che due server modifichino contemporaneamente lo stesso inventario. Per trasferire un inventario esistente, fermare entrambi i server e copiare il database con gli eventuali file `-wal` e `-shm` nella cartella scelta. Non avviare contemporaneamente due processi contro lo stesso archivio durante una migrazione.
+## Aggiornamento, credenziali e backup
 
-Per il backup fermare il servizio e salvare tutta `data/personali/`, quindi riavviare. `foods.db` è rigenerabile e non serve nel backup essenziale. Ricostruire l'immagine non modifica questi dati.
-
-## Preparazione del catalogo dentro Docker
-
-Lo strumento di importazione condivide l'immagine dell'applicazione, ma è escluso dall'avvio ordinario tramite il profilo `strumenti`. Ha il dump montato in sola lettura e nessuna rete. Dopo la prima build:
+Prima dell'aggiornamento esegui un backup con nome nuovo:
 
 ```bash
-docker compose run --rm importazione --campione
-```
-
-Dopo aver verificato il sample, per preparare il catalogo completo:
-
-```bash
-docker compose stop fridgebrain
-docker compose run --rm importazione --completo
-docker compose up -d
-```
-
-È possibile usare un file specifico:
-
-```bash
-docker compose run --rm importazione --origine /app/data/raw/nuovo-dump.jsonl.gz
-```
-
-Il servizio importa in `/app/data/processed/foods.db`, cioè `data/processed/foods.db` sul computer. Non può accedere al database personale. Gli originali restano compressi e non vengono modificati. Per dettagli e test vedere [Catalogo alimentare](catalogo.md).
-
-## Modello locale facoltativo
-
-In `.env` impostare:
-
-```dotenv
-FRIDGEBRAIN_GENERATORE=locale
-FRIDGEBRAIN_OLLAMA_DOCKER_URL=http://host.docker.internal:11434
-FRIDGEBRAIN_MODELLO=qwen3:8b
-```
-
-Ollama e il modello scelto devono essere già installati e raggiungibili dal contenitore. L'indirizzo `host.docker.internal` è configurato anche per Docker Engine Linux. Ollama deve accettare connessioni dall'interfaccia locale raggiunta da Docker; limitarne l'accesso alla rete fidata. Applicare le modifiche con `docker compose up -d`. La modalità predefinita `disabilitato` lascia operative tutte le funzioni principali.
-
-## Rete domestica, fotocamera e PWA
-
-Per l'accesso da altri dispositivi si può impostare `FRIDGEBRAIN_INDIRIZZO` all'indirizzo della scheda di rete locale. Non configurare inoltri di porta sul router. Fotocamera, service worker e installazione PWA richiedono un contesto sicuro: `localhost` sul computer oppure HTTPS con certificato attendibile sui telefoni. La semplice apertura di un indirizzo IP HTTP da smartphone non abilita queste API del browser.
-
-Un reverse proxy HTTPS locale può inoltrare al servizio sulla porta 3000. Aggiungere l'origine completa, per esempio `https://fridgebrain.casa`, a `FRIDGEBRAIN_ORIGINI`, separando più origini con virgole. Se si cambia la porta HTTP, aggiornare anche le origini corrispondenti. Non serve alcun servizio cloud.
-
-### Procedura HTTPS locale inclusa
-
-Il profilo facoltativo `https` avvia Caddy e il `Caddyfile` del repository. `tls internal` genera i certificati con un'autorità locale, senza ACME, account o DNS pubblico; sui dispositivi va installato il certificato pubblico dell'autorità. [Documentazione Caddy](https://caddyserver.com/docs/automatic-https#local-https).
-
-1. Individuare l'indirizzo privato del computer nella rete domestica (`ipconfig` su Windows), per esempio `192.168.1.50`. È consigliabile mantenere questo indirizzo stabile nelle impostazioni DHCP del router.
-2. Creare `.env` da `.env.example` e impostare i valori seguenti, sostituendo l'IP di esempio con quello reale:
-
-```dotenv
-FRIDGEBRAIN_DOMINIO_HTTPS=192.168.1.50
-FRIDGEBRAIN_HTTPS_INDIRIZZO=192.168.1.50
-FRIDGEBRAIN_HTTPS_PORTA=8443
-FRIDGEBRAIN_ORIGINI=http://localhost:3000,http://127.0.0.1:3000,https://192.168.1.50:8443
-```
-
-3. Avviare il profilo e copiare il certificato pubblico:
-
-```bash
-docker compose --profile https up -d
-docker compose cp https:/data/caddy/pki/authorities/local/root.crt data/fridgebrain-ca.crt
-```
-
-4. Trasferire soltanto `data/fridgebrain-ca.crt` al telefono, per esempio via cavo. Non trasferire `root.key` né la cartella `data/caddy`, che contiene le chiavi dell'autorità locale.
-5. Su Android, aprire **Impostazioni → Sicurezza e privacy → Altre impostazioni di sicurezza → Crittografia e credenziali → Installa un certificato → Certificato CA**, quindi selezionare il file. I nomi possono variare per produttore. [Guida Google](https://support.google.com/pixelphone/answer/2844832?hl=it).
-6. Su iPhone/iPad, aprire il certificato, installare il profilo nelle impostazioni e abilitare esplicitamente l'attendibilità in **Impostazioni → Generali → Info → Impostazioni attendibilità certificati** per l'autorità Caddy. L'installazione del profilo da sola non abilita necessariamente la fiducia SSL. [Guida Apple](https://support.apple.com/it-it/102390).
-7. Collegare il telefono alla stessa rete Wi-Fi e aprire `https://192.168.1.50:8443`. Verificare che il browser non mostri errori di certificato; quindi consentire la fotocamera quando richiesta e aggiungere FridgeBrain alla schermata Home dal browser.
-
-Se il firewall del computer blocca la porta, consentire TCP 8443 soltanto sulla rete privata domestica. Non aprire porte del router. Il file `Caddyfile` non pubblica automaticamente HTTP né contatta servizi per ottenere certificati. La CA persiste in `data/caddy/`; cancellarla richiederebbe installare il nuovo certificato sui telefoni. Il profilo HTTPS non viene avviato da `docker compose up -d` senza `--profile https`.
-
-## Diagnostica e aggiornamenti
-
-```bash
-docker compose config
-docker compose logs --tail=100 fridgebrain
-docker compose exec fridgebrain node -e "fetch('http://127.0.0.1:3000/api/salute').then(risposta=>risposta.json()).then(console.log)"
+docker compose exec fridgebrain python3 scripts/backup_dati.py --origine /app/data/fridgebrain.db --destinazione /app/data/backup/prima-aggiornamento.db
 docker compose up -d --build
 ```
 
-- `permission denied` sul database: verificare proprietario e permessi di `data/personali` e UID/GID configurati.
-- Catalogo indisponibile: controllare `data/processed/foods.db` e i log dell'importazione.
-- Porta occupata: impostare `FRIDGEBRAIN_PORTA` a una porta libera e aggiornare `FRIDGEBRAIN_ORIGINI`.
-- Provider locale irraggiungibile: verificare URL Docker, modello installato e ascolto di Ollama sulla rete locale.
-- Motore Docker non raggiungibile: avviare Docker Desktop, attendere lo stato operativo e ripetere `docker version`.
+Per cambiare password modifica `.env` e usa `docker compose up -d --force-recreate fridgebrain`. Le credenziali precedenti non saranno più accettate. Basic non prevede un logout applicativo: usa un profilo privato su dispositivi condivisi. Non pubblicare un avvio Node HTTP su Internet.
 
-Durante la preparazione su questa macchina è stato avviato Docker Desktop senza reset o modifiche distruttive. Il motore Linux risponde correttamente: Docker Engine 29.8.0, Docker Desktop 4.91.0, Compose 5.5.1. La verifica della build e dell'avvio dell'applicazione viene eseguita dopo il completamento delle schermate.
+Salva altrove i backup verificati e conserva `.env` e stato Caddy in un luogo protetto. Per ripristinare arresta l'app, conserva la directory attuale e usa una nuova directory personale contenente il backup rinominato `fridgebrain.db`; non riutilizzare WAL precedenti. Riavvia e controlla inventario e storico.
+
+## Provider ricette invariato
+
+Per Ollama sullo stesso VPS usa `FRIDGEBRAIN_GENERATORE=locale` e `FRIDGEBRAIN_OLLAMA_DOCKER_URL=http://host.docker.internal:11434`; l'host deve accettare connessioni dalla rete Docker. Proteggi la porta dal traffico pubblico. Il modello deve già essere installato e compatibile con le risorse disponibili. L'app non richiede Ollama per inventario, scanner, spesa o nutrienti.
+
+## Diagnostica
+
+`docker compose logs --tail 100 fridgebrain https` mostra errori di avvio e TLS. Per certificati controlla DNS, porte occupate e firewall; per SQLite controlla permessi e spazio libero. Le API OFF richiedono DNS e uscita HTTPS dal container. Non cambiare `FRIDGEBRAIN_OFF_URL` in produzione. Dopo il rilascio apri online l'app su ciascun dispositivo per eliminare tramite il nuovo service worker le copie personali della vecchia versione.

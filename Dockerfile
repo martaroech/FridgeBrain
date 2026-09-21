@@ -19,19 +19,18 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000 \
     FRIDGEBRAIN_DATI=/app/data \
-    FRIDGEBRAIN_CATALOGO=/app/catalogo/foods.db \
     FRIDGEBRAIN_GENERATORE=disabilitato \
     PYTHONUNBUFFERED=1
 
-# Python serve soltanto all'importazione locale del catalogo.
+# Python permette il backup consistente SQLite anche dal contenitore.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /app/data /app/catalogo /app/.next/cache \
+    && mkdir -p /app/data /app/.next/cache \
     && chown -R node:node /app
 COPY --from=compilazione --chown=node:node /app/.next/standalone ./
 COPY --from=compilazione --chown=node:node /app/.next/static ./.next/static
 COPY --from=compilazione --chown=node:node /app/public ./public
-COPY --chown=node:node scripts/costruisci_database_alimenti.py scripts/analizza_sample.py ./scripts/
+COPY --chown=node:node scripts/backup_dati.py ./scripts/
 
 USER node
 EXPOSE 3000

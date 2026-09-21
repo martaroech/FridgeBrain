@@ -290,17 +290,15 @@ export function Impostazioni({
           <span className="icona-sezione">
             <ShieldCheck size={26} />
           </span>
-          <h2>A casa tua, davvero.</h2>
+          <h2>I tuoi dati, protetti.</h2>
           <p>
             Inventario, preferenze e ricette sono conservati sul tuo server
-            locale. Non è necessario un account.
+            personale, protetto dalle tue credenziali.
           </p>
           <dl className="stato-sistema">
             <div>
               <dt>Catalogo alimentare</dt>
-              <dd>
-                {stato.catalogo_disponibile ? "Disponibile" : "Da preparare"}
-              </dd>
+              <dd>Open Food Facts e cache</dd>
             </div>
             <div>
               <dt>Generatore ricette</dt>
@@ -339,16 +337,16 @@ export function Impostazioni({
               <p>
                 Per installare l’app usa «Installa» o «Aggiungi alla schermata
                 Home» nel menu del browser. Su smartphone usa l’indirizzo HTTPS
-                del server di casa.
+                del tuo server.
               </p>
               <p>
                 Per conservare i tuoi dati esegui il backup di fridgebrain.db
-                seguendo le istruzioni nel README. Il catalogo foods.db può
-                essere rigenerato separatamente.
+                seguendo le istruzioni nel README. Il backup include anche i
+                prodotti recuperati da Open Food Facts.
               </p>
               <p className="nota">
-                Senza Internet l’app funziona sulla rete locale. Il server che
-                conserva i dati deve essere acceso e raggiungibile.
+                Il server deve essere raggiungibile. I nuovi barcode richiedono
+                anche il collegamento del server a Open Food Facts.
               </p>
             </div>
           </details>

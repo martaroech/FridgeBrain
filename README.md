@@ -1,54 +1,62 @@
 # FridgeBrain
 
-La tua cucina, in ordine: una PWA in italiano per ricordare cosa hai in casa, controllare le scadenze, preparare la spesa e creare ricette con i prodotti disponibili.
+Webapp/PWA personale per inventario alimentare, scadenze, spesa, preferenze e ricette. Si installa su un server Linux/VPS con Docker e Caddy ed è raggiungibile dal telefono via HTTPS. Un solo utente, autenticazione obbligatoria, dati persistenti in SQLite.
 
-FridgeBrain gira sul tuo computer o server domestico. Dopo l’installazione e la preparazione del catalogo, le funzioni principali non richiedono Internet. Smartphone e tablet si collegano al server sulla rete di casa. Nessun account, servizio nutrizionale remoto o immagine di prodotto scaricata durante l’uso.
+Questa versione aggiorna l'architettura della specifica originaria: i prodotti vengono recuperati dalle API Open Food Facts e conservati nel database personale. Non occorrono cataloghi da costruire. I file storici in `data/raw/` non vengono letti o modificati. UI, design system, inventario, motore nutrizionale e provider ricette restano quelli esistenti.
 
-## Avvio rapido con Docker
+## Avvio pubblico Docker
 
-Occorre Docker con il motore Linux avviato e Docker Compose. Su Windows avvia Docker Desktop. Il repository contiene già i dataset originali in `data/raw/`; non decomprimerli.
-
-Se il catalogo `data/processed/foods.db` è già presente:
+Prerequisiti: server Linux con Docker Engine e plugin Compose, dominio con record DNS A/AAAA corretto, porte TCP 80 e 443 raggiungibili. Il server deve poter contattare Open Food Facts e le autorità dei certificati via Internet.
 
 ```bash
-docker compose up -d
+cp .env.example .env
+# Modifica .env: dominio, utente, password casuale e contatto Open Food Facts.
+mkdir -p data/personali data/caddy/data data/caddy/config
+sudo chown -R 1000:1000 data/personali
+chmod 600 .env
+docker compose up -d --build
 ```
 
-Apri [FridgeBrain](http://localhost:3000). Il primo avvio costruisce l’immagine e richiede Internet per le dipendenze; i successivi no. Il generatore creativo è inizialmente disabilitato, mentre tutte le altre funzioni sono disponibili.
+Per avviare di nuovo l'immagine già costruita basta `docker compose up -d`. Apri `https://IL-TUO-DOMINIO`: il browser chiede utente e password. Caddy ottiene e rinnova il certificato pubblico e reindirizza HTTP a HTTPS. La porta Node 3000 rimane soltanto nella rete Docker. Non serve installare certificati manualmente sul telefono.
 
-Se il catalogo non è stato preparato:
+Se usi un UID/GID diverso da 1000, adegua `.env` e il proprietario di `data/personali`. [Deployment e aggiornamenti](docs/docker.md).
 
-```bash
-docker compose build
-docker compose run --rm importazione --campione
-docker compose up -d
-```
+## Autenticazione e variabili d'ambiente
 
-Il sample è piccolo e serve per sviluppo: riconosce solo i suoi 456 prodotti. Per l’utilizzo quotidiano prepara il dump completo con la procedura seguente. Anche senza catalogo puoi creare e usare prodotti personalizzati.
+L'autenticazione HTTP Basic protegge pagine e tutte le API personali, anche accedendo direttamente al processo Node. Nessun database utenti, registrazione o servizio di autenticazione esterno. L'unica API pubblica è `/api/salute`, che restituisce soltanto `{ok:true}`. Manifest, icone, service worker e risorse statiche sono pubblici e non contengono dati personali.
 
-I dati personali Docker si trovano in `data/personali/fridgebrain.db`. Il catalogo si trova in `data/processed/foods.db`, montato in sola lettura nell’app. I dump e i database non vengono inclusi nell’immagine. Su Linux prepara le directory con un proprietario coerente con UID/GID del container: vedi [istruzioni Docker](docs/docker.md).
+| Variabile                            | Uso                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `FRIDGEBRAIN_UTENTE`                 | Nome dell'unico utente, obbligatorio, senza `:`                                                   |
+| `FRIDGEBRAIN_PASSWORD`               | Password obbligatoria, almeno 20 caratteri; usare un valore casuale di 32 byte                    |
+| `FRIDGEBRAIN_DOMINIO`                | Nome DNS pubblico, senza protocollo o percorso                                                    |
+| `FRIDGEBRAIN_DATI`                   | Directory SQLite nell'avvio Node, predefinita `data`; Docker usa `/app/data`                      |
+| `FRIDGEBRAIN_UID`, `FRIDGEBRAIN_GID` | Proprietario del processo e del volume personale Docker, predefiniti 1000                         |
+| `FRIDGEBRAIN_OFF_USER_AGENT`         | `FridgeBrain/1.0 (URL dell'installazione; contatto reale)`                                        |
+| `FRIDGEBRAIN_OFF_URL`                | Predefinito `https://world.openfoodfacts.org`; cambiare soltanto per test con servizio simulato   |
+| `FRIDGEBRAIN_ORIGINI`                | Origini aggiuntive consentite alle modifiche nell'avvio diretto; Compose imposta il dominio HTTPS |
+| `FRIDGEBRAIN_GENERATORE`             | `disabilitato` inizialmente, `locale` oppure `simulato` per test                                  |
+| `FRIDGEBRAIN_OLLAMA_URL`             | URL locale del provider nell'avvio Node                                                           |
+| `FRIDGEBRAIN_OLLAMA_DOCKER_URL`      | URL del provider raggiungibile dal container                                                      |
+| `FRIDGEBRAIN_MODELLO`                | Modello Ollama, predefinito `qwen3:8b`                                                            |
+
+Puoi generare una password con `openssl rand -hex 32` sul VPS, oppure con `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. Inseriscila in `.env`, già escluso da Git e dall'immagine. Non usare le credenziali dei test. Configurazione assente o password troppo corta bloccano l'accesso con 503.
+
+Basic richiede HTTPS su Internet; HTTP è ammesso solo sul loopback per sviluppo. Il browser conserva le credenziali: non c'è un pulsante di logout né una scadenza di sessione. Su dispositivi condivisi usa una finestra privata e chiudila dopo l'uso. Per revocare l'accesso cambia la password e ricrea il container. Chi accede al server o al file `.env` può leggere il segreto: limita i permessi del file e l'accesso amministrativo.
 
 ## Installazione e sviluppo senza Docker
 
-Requisiti: Node.js 24 o successivo, Python 3.10 o successivo, pnpm 11.19.0. Python usa solo la libreria standard. Il driver SQLite è quello integrato in Node 24.
+Requisiti: Node.js 24 e pnpm 11.19.0. Python 3.10+ è facoltativo, per backup e relativi test. SQLite è integrato in Node.
 
 ```bash
 npm install --global pnpm@11.19.0
 pnpm install --frozen-lockfile
-python scripts/costruisci_database_alimenti.py --campione
+cp .env.example .env
+# Configura utente e password anche per lo sviluppo.
 pnpm dev
 ```
 
-Apri [localhost:3000](http://localhost:3000). Per personalizzare i percorsi o il provider, copia `.env.example` in `.env` e modifica i valori desiderati. Non è obbligatorio creare `.env` per l’avvio locale.
-
-Avvio di produzione, necessario anche per verificare la PWA:
-
-```bash
-pnpm build
-pnpm start
-```
-
-In esecuzione diretta i dati personali sono in `data/fridgebrain.db`. Le sessioni Docker, dimostrativa e di test hanno directory distinte per non mescolare i dati. Per passare da esecuzione diretta a Docker usa un backup consistente del database personale e ripristinalo come `data/personali/fridgebrain.db` a container fermo.
+Apri `http://127.0.0.1:3000`. Per la produzione locale e per verificare la PWA: `pnpm build` e `pnpm start`. Questi comandi ascoltano sul loopback; per la pubblicazione usare Docker/Caddy. In esecuzione diretta i dati sono in `data/fridgebrain.db`, in Docker in `data/personali/fridgebrain.db`.
 
 ## Uso quotidiano
 
@@ -63,44 +71,15 @@ In esecuzione diretta i dati personali sono in `data/fridgebrain.db`. Le session
 
 Se un barcode non è presente puoi creare il prodotto manualmente, inclusi dati nutrizionali e dichiarazioni del produttore. Sarà riconosciuto nelle ricerche successive e rimarrà nel database personale.
 
-## Catalogo Open Food Facts
+## Prodotti Open Food Facts
 
-I file in `data/raw/` sono immutabili per la pipeline. L’importer identifica il sample dal file `.jsonl.gz` più piccolo e il dump completo dal più grande; puoi indicare un percorso esplicito. La lettura è streaming, con righe e blocchi limitati, senza salvare copie decompresse.
+La stessa API `GET /api/prodotti?codice=...` cerca prima i prodotti personalizzati e la cache SQLite, comprese le equivalenze GTIN già supportate. Solo un barcode sconosciuto provoca una richiesta HTTPS a Open Food Facts. La risposta viene verificata e normalizzata mantenendo i nomi originali dei campi, poi salvata in `cache_prodotti_off`. Scansionare nuovamente un prodotto non richiede Internet verso OFF. Non serve una chiave API.
 
-```bash
-# Analisi della struttura e rigenerazione delle 20 fixture reali
-python scripts/analizza_sample.py
+Il recupero ha un limite di 8 secondi e 2 MiB di risposta. Prodotti assenti, codici non validi, timeout, rete indisponibile, risposte malformate e limite di richieste hanno messaggi distinti. Dopo un 429 il server sospende nuovi recuperi per un minuto; cache e prodotti personali restano disponibili. Non vengono memorizzati risultati negativi. Le ricerche per nome o marca sono limitate ai prodotti già in cache e a quelli personali: non interrogano la ricerca remota OFF.
 
-# Catalogo di sviluppo
-python scripts/costruisci_database_alimenti.py --campione
+La cache non scade automaticamente e non viene aggiornata a ogni scansione. Per forzare il recupero di un prodotto, un amministratore può eliminare la sola riga corrispondente dalla cache, a server fermo e dopo un backup. Inventario e ricette mantengono i propri snapshot. [Schema e gestione cache](docs/catalogo.md).
 
-# Test importer prima dell’elaborazione completa
-python -m unittest discover -s tests -p "test_*.py" -v
-```
-
-Per il dump completo, arresta l’app prima di sostituire il catalogo, specialmente su Windows:
-
-```bash
-docker compose stop fridgebrain
-python scripts/costruisci_database_alimenti.py --completo
-docker compose up -d
-```
-
-Oppure interamente in Docker:
-
-```bash
-docker compose stop fridgebrain
-docker compose run --rm importazione --completo
-docker compose up -d
-```
-
-Origine e destinazione esplicite:
-
-```bash
-python scripts/costruisci_database_alimenti.py --origine data/raw/nuovo-dump.jsonl.gz --destinazione data/processed/foods.db
-```
-
-L’importazione completa richiede tempo e spazio libero per il nuovo database, gli indici e il catalogo precedente. Ogni 50.000 record viene riportato l’avanzamento. La sostituzione avviene solo dopo la verifica di integrità; un gzip troncato o un import vuoto non distruggono il catalogo funzionante. Nessuna operazione dell’importer tocca `fridgebrain.db`. Dettagli e misure in [catalogo](docs/catalogo.md).
+Il server trasmette a OFF il barcode richiesto e lo User-Agent configurato, non inventario, preferenze o credenziali dell'utente. Il browser comunica soltanto con FridgeBrain. [Documentazione API OFF](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-cheatsheet/).
 
 ## Ricette e modello locale
 
@@ -138,98 +117,85 @@ La pipeline seleziona prima gli ingredienti compatibili, poi richiede una propos
 
 L’etichetta originale resta il riferimento per allergeni e dichiarazioni. Open Food Facts e FridgeBrain non forniscono certificazioni mediche.
 
-## Smartphone, PWA e assenza di Internet
+## Smartphone e PWA
 
-La navigazione inferiore offre Home, Inventario, Aggiungi, Ricette e Spesa. Tablet e desktop usano lo stesso design system con una composizione più ampia. I controlli sono utilizzabili da tastiera e le scadenze hanno sempre un’indicazione testuale.
+UI e navigazione restano invariate: Home, Inventario, Aggiungi, Ricette, Spesa; stesso design system su smartphone, tablet e desktop. Da HTTPS usa «Installa app» o «Aggiungi alla schermata Home». La fotocamera richiede HTTPS e il consenso del browser; l'inserimento manuale è sempre disponibile.
 
-La PWA include manifest, icone locali e service worker in produzione. Usa **Installa app** o **Aggiungi alla schermata Home** nel browser. Fotocamera, service worker e installazione su smartphone richiedono HTTPS affidabile; `http://localhost` è ammesso sul computer stesso. Un semplice indirizzo `http://192.168...` permette l’inserimento manuale, ma non garantisce lo scanner o l’installazione. La procedura HTTPS domestica è in [Docker e HTTPS](docs/docker.md).
+La PWA conserva soltanto risorse statiche. Pagine e dati personali richiedono il server e l'autenticazione; in assenza di collegamento compare «Connessione assente». Le vecchie copie personali della precedente versione vengono eliminate all'attivazione del nuovo service worker. Non c'è sincronizzazione differita. Dopo l'aggiornamento apri l'app con connessione disponibile su ciascun dispositivo per attivare il nuovo worker.
 
-**Senza Internet, con server e rete domestica disponibili:** inventario, scanner, catalogo, scadenze, spesa, nutrienti e modello già installato funzionano normalmente. Font, icone e libreria barcode sono locali.
-
-**Senza collegamento al server domestico:** dopo un accesso riuscito in produzione, il service worker conserva l’interfaccia e l’ultima copia di inventario, spesa e ricette. La UI indica chiaramente data e modalità di consultazione. Le modifiche richiedono il server; non esiste una coda di sincronizzazione che rischi di duplicare consumi. Al ritorno della connessione la copia viene aggiornata. La cache contiene dati personali: usa un profilo browser privato su dispositivi condivisi e cancella i dati del sito per rimuoverla.
+Se solo Open Food Facts è irraggiungibile, restano utilizzabili inventario, prodotti già in cache, prodotti manuali, spesa e calcoli. Un barcode mai recuperato richiede Internet dal server. Il provider ricette mantiene i propri requisiti di configurazione e disponibilità.
 
 ## Test e verifica
 
 ```bash
 pnpm controlla
-pnpm test:importazione
 pnpm test
+pnpm test:backup
 pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-La suite browser richiede la build già creata con `pnpm build`: prepara automaticamente `data/processed/foods-sample.db` dal sample e avvia il server sulla porta 3100. Usa il database isolato `data/test-browser`, il generatore simulato e tre formati: smartphone (390 px), tablet (820 px), desktop (1440 px). Copre barcode reali, decodifica video con ZXing, prodotti manuali, scadenze, scorte, consumo, spesa, preferenze, ricette, PWA dal primo accesso, blocco delle modifiche offline, ritorno della connessione, risposte perse e accessibilità con axe e tastiera. Non sostituisce il catalogo completo. Puoi indicare l’eseguibile Python tramite `FRIDGEBRAIN_PYTHON`.
+I test riutilizzano le fixture dei 20 prodotti reali già presenti. OFF viene simulato con risposte e server HTTP locali: nessun test dipende dal servizio pubblico, dai file originali o da un catalogo generato. I test browser avviano l'app sulla porta 3100, OFF simulato sulla 3101 e usano `data/test-browser`, credenziali esclusivamente di prova e provider simulato. Lascia entrambe le porte libere. Coprono tre formati (390, 820 e 1440 px), scanner video, inventario, scadenze, spesa, ricette, errori, accessibilità, autenticazione e PWA.
 
-Le schermate di verifica sono in `data/verifica-visuale/`; immagini degli errori e tracce in `test-results/`; il report navigabile è in `playwright-report/`.
+Schermate in `data/verifica-visuale/`, tracce in `test-results/`, report in `playwright-report/`. Per una cucina dimostrativa separata: `pnpm exec tsx scripts/prepara_demo.ts`, poi avvia con `FRIDGEBRAIN_DATI=data/demo`. I valori dimostrativi sono sintetici; il tuo inventario non viene modificato.
 
-Per una cucina dimostrativa separata:
+## SQLite, migrazione e backup
 
-```bash
-pnpm exec tsx scripts/prepara_demo.ts
-```
+Un solo database `fridgebrain.db` in modalità WAL contiene `inventario`, `prodotti_personalizzati`, `posizioni`, `spesa`, `impostazioni`, `ricette`, `storico`, `operazioni` e la nuova `cache_prodotti_off` (barcode, JSON prodotto, primo recupero, ultimo aggiornamento).
 
-Imposta `FRIDGEBRAIN_DATI=data/demo` prima di avviare l’app. Lo script non modifica il catalogo o l’inventario reale e non sovrascrive una demo esistente. I prodotti e i valori della demo sono dichiaratamente sintetici.
+Lo schema versione 3 aggiunge la cache senza ricreare le tabelle personali. Esegui un backup prima dell'aggiornamento e mantieni lo stesso volume. Gli alimenti già posseduti conservano ingredienti, nutrienti e allergeni anche se non sono ancora presenti nella nuova cache. Non vengono importati automaticamente nella cache i dati del vecchio catalogo.
 
-## Database e backup
-
-| Archivio | Contenuto | Politica |
-| --- | --- | --- |
-| `data/processed/foods.db` | Prodotti OFF, indice barcode, ricerca FTS5, metadati | Rigenerabile, sola lettura nell’app |
-| `data/fridgebrain.db` | Dati personali nell’avvio diretto | Persistente, SQLite WAL |
-| `data/personali/fridgebrain.db` | Dati personali nell’avvio Docker | Persistente, montaggio scrivibile |
-| `data/demo/`, `data/test-browser/` | Anteprima e test | Separati dai dati reali |
-
-Il database personale contiene tabelle italiane: `inventario`, `prodotti_personalizzati`, `posizioni`, `spesa`, `impostazioni`, `ricette`, `storico`, `operazioni`. Ogni voce dell’inventario conserva una copia del prodotto: la rigenerazione del catalogo non modifica ciò che possiedi.
-
-Backup consistente anche con app aperta:
+Backup consistente con app aperta:
 
 ```bash
-python scripts/backup_dati.py --origine data/fridgebrain.db --destinazione data/backup/fridgebrain-2026-09-18.db
-# Per Docker usare --origine data/personali/fridgebrain.db
+python scripts/backup_dati.py --origine data/fridgebrain.db --destinazione data/backup/fridgebrain-copia.db
+# Oppure dentro Docker, senza installare Python sul VPS:
+docker compose exec fridgebrain python3 scripts/backup_dati.py --origine /app/data/fridgebrain.db --destinazione /app/data/backup/fridgebrain-copia.db
 ```
 
-Scegli un nome nuovo per ogni backup; lo script non sovrascrive backup esistenti. Copia poi il file su un supporto diverso. In alternativa arresta completamente il server e salva il database personale insieme a eventuali file `-wal` e `-shm`: non copiare soltanto `.db` mentre l’app sta scrivendo.
+Scegli un nome nuovo ogni volta e copia il backup su un supporto diverso. Non copiare solo il file `.db` mentre l'app scrive: possono esserci transazioni nei file WAL. Per ripristinare, ferma l'app, conserva l'archivio attuale e metti il backup verificato in una nuova directory con nome `fridgebrain.db`, senza vecchi file WAL; configura la directory o il montaggio Docker e riavvia. I dati personali Docker sono in `data/personali/`; i certificati Caddy in `data/caddy/`.
 
-Per ripristinare, arresta il server, conserva i dati attuali in una cartella di sicurezza e metti il backup verificato in una **nuova** directory con nome `fridgebrain.db`. Imposta `FRIDGEBRAIN_DATI` su quella directory, oppure usa la directory montata da Docker. Non affiancare al database ripristinato vecchi file WAL. Riavvia e verifica inventario e storico. `foods.db` non è indispensabile nel backup.
-
-## Struttura
+## Struttura e design
 
 ```text
 src/app/                    Pagina Next.js e API
-src/components/             Schermate e componenti italiani condivisi
-src/lib/tipi.ts             Contratti del dominio
-src/lib/database.ts         Connessioni e schema SQLite
-src/lib/servizi.ts          Validazione e operazioni applicative
-src/lib/motore.ts           Nutrizione, regole e provider ricette
-scripts/                    Importazione, analisi, backup e demo
-tests/                      Test Python, TypeScript e browser
-public/                     Manifest, service worker e icone locali
-docs/                       Design system, catalogo, API e Docker
-data/                       Originali e dati persistenti, esclusi da Git
+src/proxy.ts                Protezione delle pagine
+src/components/             Schermate e componenti condivisi
+src/lib/tipi.ts             Contratti del dominio invariati
+src/lib/database.ts         Schema SQLite e migrazione
+src/lib/servizi.ts          Cache e operazioni applicative
+src/lib/open-food-facts.ts  Client OFF e normalizzazione
+src/lib/autenticazione.ts   Autenticazione dell'unico utente
+src/lib/motore.ts           Nutrizione, regole e provider ricette invariati
+scripts/                    Backup, demo, risorse e server test
+tests/                      Test TypeScript, backup Python e browser
+public/                     Manifest, service worker e icone
+data/                       Dati persistenti, esclusi da Git e dall'immagine
 ```
 
-Design system: avorio, bianco, salvia, verde profondo, grafite, ambra e rosso tenue; caratteri di sistema; spaziatura su base 4 px; raggi moderati; icone outline e liste con separatori. [Decisioni visuali](docs/design-system.md) e [contratto API](docs/contratto-api.md).
+Palette avorio, salvia, verde profondo, grafite, ambra e rosso tenue; caratteri di sistema, spaziatura su base 4 px, raggi moderati. [Design system](docs/design-system.md) e [contratto API](docs/contratto-api.md).
 
 ## Risoluzione dei problemi
 
-| Problema | Azione |
-| --- | --- |
-| Docker non si connette al motore | Avvia Docker Desktop in modalità container Linux e verifica `docker info` |
-| Catalogo non disponibile | Genera `foods.db` e controlla `FRIDGEBRAIN_CATALOGO` / montaggio in sola lettura |
-| Barcode assente | Il sample ha copertura limitata; prepara il dump completo o crea il prodotto personalizzato |
-| Database bloccato durante sostituzione | Arresta i processi Node e il container che tengono aperto il catalogo, poi ripeti l’import |
-| Fotocamera negata o assente | Controlla permessi, HTTPS e altre applicazioni che usano la camera; il codice manuale è sempre disponibile |
-| Nessun ingrediente utilizzabile | Registra quantità totali in g/ml coerenti, controlla scadenze e dichiarazioni richieste dalle restrizioni |
-| Nessuna ricetta conforme | Controlla disponibilità e limiti numerici; dati sconosciuti non possono verificare un limite |
-| Modello locale non risponde | Avvia Ollama, verifica modello installato e indirizzo locale, poi riavvia l’app |
-| UI vecchia dopo aggiornamento | Ricarica con rete locale disponibile; se necessario cancella la cache del sito e riapri |
-| Porta occupata | Cambia `FRIDGEBRAIN_PORTA` in Docker oppure usa `pnpm start --port 3001` |
+| Problema                 | Azione                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| Accesso 503              | Configura utente e password casuale di almeno 20 caratteri e ricrea il container        |
+| Accesso 401              | Verifica credenziali; chiudi il profilo privato per scartare quelle memorizzate         |
+| Certificato non emesso   | Controlla DNS A/AAAA, firewall 80/443, log Caddy e assenza di altri servizi sulle porte |
+| Barcode assente          | Verifica il codice o crea il prodotto manualmente                                       |
+| Errore OFF 429           | Attendi almeno un minuto; i prodotti già salvati restano disponibili                    |
+| Errore OFF 502/503/504   | Controlla connessione in uscita, URL OFF e disponibilità del servizio, poi riprova      |
+| Scrittura SQLite fallita | Verifica spazio libero e UID/GID della directory personale                              |
+| Fotocamera negata        | Verifica HTTPS, permessi e altre applicazioni che usano la camera                       |
+| Modifiche rifiutate 403  | Apri il dominio configurato; verifica origine HTTPS e riavvia dopo modifiche a .env     |
+| UI vecchia               | Riapri online; se necessario cancella i dati del sito e accedi di nuovo                 |
+| Ricette non disponibili  | Configura il provider locale oppure controlla quantità, scadenze e restrizioni          |
 
-Diagnostica Docker: `docker compose logs --tail 100 fridgebrain`. Le API restituiscono messaggi in italiano e non espongono dettagli del database. Il server è progettato per una rete domestica fidata; non pubblicarlo su Internet. Docker espone inizialmente solo `127.0.0.1`.
+Diagnostica: `docker compose logs --tail 100 fridgebrain https`. Non pubblicare segreti o il contenuto del database nei log condivisi.
 
-## Attribuzione e versioni future
+## Attribuzione e limiti
 
-Il catalogo e le fixture reali provengono da [Open Food Facts](https://world.openfoodfacts.org/), la cui banca dati è distribuita sotto [ODbL](https://openfoodfacts.github.io/documentation/docs/Product-Opener/api/tutorials/license-be-on-the-legal-side/). Gli originali e i dati personali non vengono aggiunti a Git.
+Prodotti e fixture provengono da [Open Food Facts](https://world.openfoodfacts.org/), banca dati [ODbL](https://openfoodfacts.github.io/documentation/docs/Product-Opener/api/tutorials/license-be-on-the-legal-side/). L'etichetta originale resta il riferimento per allergeni e nutrienti.
 
-Esclusi dalla V1 come da `SPEC.md`: OCR di scadenze/ingredienti/nutrienti, riconoscimento visivo o scontrini, aggiornamenti automatici del catalogo, account e sincronizzazione cloud, accesso pubblico, app native, analisi avanzate dei consumi e previsione degli acquisti. Le posizioni sono modellate in una tabella estensibile; nuovi provider ricette possono implementare la stessa interfaccia senza assumere compiti deterministici.
+Restano esclusi multiutenza, PostgreSQL, OCR, riconoscimento visivo e sincronizzazione senza server. Nessuna migrazione sostanziale del provider AI. Il rilascio pubblico richiede il tuo dominio, VPS e credenziali: la repository prepara il deployment ma non crea un server né pubblica automaticamente un'istanza.

@@ -6,13 +6,13 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0",
+    "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0",
+    "start": "next start --hostname 127.0.0.1",
     "controlla": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:importazione": "python -m unittest discover -s tests -p test_*.py",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:backup": "python -m unittest discover -s tests -p test_backup.py"
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",

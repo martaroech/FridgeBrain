@@ -7,6 +7,11 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
+    httpCredentials: {
+      username: "prova",
+      password: "password-solo-test-molto-lunga",
+      send: "always",
+    },
     baseURL: "http://127.0.0.1:3100",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -35,7 +40,9 @@ export default defineConfig({
     timeout: 60000,
     env: {
       FRIDGEBRAIN_DATI: "data/test-browser",
-      FRIDGEBRAIN_CATALOGO: "data/processed/foods-sample.db",
+      FRIDGEBRAIN_UTENTE: "prova",
+      FRIDGEBRAIN_PASSWORD: "password-solo-test-molto-lunga",
+      FRIDGEBRAIN_OFF_URL: "http://127.0.0.1:3101",
       FRIDGEBRAIN_GENERATORE: "simulato",
       NEXT_TELEMETRY_DISABLED: "1",
       TZ: "Europe/Rome",

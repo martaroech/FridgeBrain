@@ -1,33 +1,21 @@
-/* La rete domestica resta la fonte autorevole. Nessuna modifica viene simulata offline. */
-const versione = "fridgebrain-v1-2";
-const risorse = `${versione}-risorse`;
-const dati = `${versione}-dati`;
+/* Solo risorse statiche. API e pagine richiedono sempre il server autenticato. */
+const versione = "fridgebrain-v2-risorse";
 const iniziali = [
-  "/",
   "/manifest.webmanifest",
   "/icone/icona-192.png",
   "/icone/icona-512.png",
   "/icone/icona-maskable.png",
 ];
-
 self.addEventListener("install", (evento) => {
   evento.waitUntil(
-    (async () => {
-      const archivio = await caches.open(risorse);
-      await archivio.addAll(iniziali);
-      const pagina = await archivio.match("/");
-      const contenuto = await pagina.text();
-      const percorsi = [
-        ...contenuto.matchAll(
-          /(?:src|href)="([^\"]*\/_next\/static\/[^\"]+)"/g,
-        ),
-      ].map((risultato) => risultato[1].replaceAll("&amp;", "&"));
-      await archivio.addAll([...new Set(percorsi)]);
-      await self.skipWaiting();
-    })(),
+    caches
+      .open(versione)
+      .then((archivio) => archivio.addAll(iniziali))
+      .then(() => self.skipWaiting()),
   );
 });
 self.addEventListener("activate", (evento) => {
+  // Elimina anche le copie personali create dalle precedenti versioni locali.
   evento.waitUntil(
     caches
       .keys()
@@ -36,8 +24,7 @@ self.addEventListener("activate", (evento) => {
           chiavi
             .filter(
               (chiave) =>
-                chiave.startsWith("fridgebrain-") &&
-                !chiave.startsWith(versione),
+                chiave.startsWith("fridgebrain-") && chiave !== versione,
             )
             .map((chiave) => caches.delete(chiave)),
         ),
@@ -50,55 +37,21 @@ self.addEventListener("fetch", (evento) => {
   const indirizzo = new URL(richiesta.url);
   if (richiesta.method !== "GET" || indirizzo.origin !== self.location.origin)
     return;
-  if (indirizzo.pathname === "/api/stato") {
-    evento.respondWith(
-      (async () => {
-        const archivio = await caches.open(dati);
-        try {
-          const risposta = await fetch(richiesta);
-          if (risposta.ok) {
-            const contenuto = await risposta.clone().json();
-            await archivio.put(
-              "/api/stato",
-              Response.json({
-                ...contenuto,
-                aggiornato_il: new Date().toISOString(),
-              }),
-            );
-          }
-          return risposta;
-        } catch {
-          const salvata = await archivio.match("/api/stato");
-          if (!salvata)
-            return Response.json(
-              {
-                errore:
-                  "Il server di casa non è raggiungibile e non è ancora disponibile una copia locale.",
-              },
-              { status: 503 },
-            );
-          return Response.json(
-            { ...(await salvata.json()), copia_offline: true },
-            { headers: { "X-FridgeBrain-Offline": "1" } },
-          );
-        }
-      })(),
-    );
-    return;
-  }
-  if (indirizzo.pathname.startsWith("/api/")) return;
   if (richiesta.mode === "navigate") {
     evento.respondWith(
-      (async () => {
-        const archivio = await caches.open(risorse);
-        try {
-          const risposta = await fetch(richiesta);
-          if (risposta.ok) await archivio.put("/", risposta.clone());
-          return risposta;
-        } catch {
-          return (await archivio.match("/")) || Response.error();
-        }
-      })(),
+      fetch(richiesta).catch(
+        () =>
+          new Response(
+            '<!doctype html><html lang="it"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FridgeBrain · Connessione assente</title><body style="font-family:system-ui;background:#faf9f5;color:#263b32;padding:32px"><h1>Connessione assente</h1><p>Ricollegati al server per accedere ai tuoi dati.</p><a href="/">Riprova</a></body></html>',
+            {
+              status: 503,
+              headers: {
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store",
+              },
+            },
+          ),
+      ),
     );
     return;
   }
@@ -108,7 +61,7 @@ self.addEventListener("fetch", (evento) => {
   ) {
     evento.respondWith(
       (async () => {
-        const archivio = await caches.open(risorse);
+        const archivio = await caches.open(versione);
         const salvata = await archivio.match(richiesta);
         if (salvata) return salvata;
         const risposta = await fetch(richiesta);

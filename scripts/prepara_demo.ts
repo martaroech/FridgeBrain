@@ -104,7 +104,7 @@ try {
   archivio.aggiungiSpesa({ nome: "Limoni", quantita: "2 pezzi" });
   archivio.aggiungiSpesa({ nome: "Pane integrale", quantita: "1 confezione" });
   console.log(
-    "Cucina dimostrativa creata in data/demo. I dati e valori sono esempi, separati dal catalogo e dall’inventario personale.",
+    "Cucina dimostrativa creata in data/demo. I dati e valori sono esempi, separati dall’inventario personale.",
   );
 } finally {
   archivio.chiudi();

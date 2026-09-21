@@ -1,19 +1,18 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync, existsSync, statSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 export interface ConfigurazioneArchivio {
   percorsoDati?: string;
-  percorsoCatalogo?: string;
+  richiediOff?: typeof fetch;
+  indirizzoOff?: string;
+  attesaOffMs?: number;
 }
 
-/** I due archivi non sono collegati: ogni alimento posseduto conserva una copia dei dati. */
+/** Ogni alimento posseduto conserva uno snapshot indipendente dalla cache OFF. */
 export class DatabaseFridgeBrain {
   readonly personale: DatabaseSync;
   readonly percorsoPersonale: string;
-  readonly percorsoCatalogo: string;
-  private alimenti: DatabaseSync | null = null;
-  private improntaCatalogo = "";
 
   constructor(configurazione: ConfigurazioneArchivio = {}) {
     const cartella = resolve(
@@ -22,15 +21,6 @@ export class DatabaseFridgeBrain {
         "data",
     );
     this.percorsoPersonale = resolve(cartella, "fridgebrain.db");
-    this.percorsoCatalogo = resolve(
-      /* turbopackIgnore: true */ configurazione.percorsoCatalogo ??
-        process.env.FRIDGEBRAIN_CATALOGO ??
-        "data/processed/foods.db",
-    );
-    if (this.percorsoCatalogo === this.percorsoPersonale)
-      throw new Error(
-        "Il catalogo alimentare e i dati personali devono usare file diversi.",
-      );
     mkdirSync(dirname(this.percorsoPersonale), { recursive: true });
     this.personale = new DatabaseSync(this.percorsoPersonale);
     this.personale.exec(`
@@ -41,6 +31,12 @@ export class DatabaseFridgeBrain {
       INSERT OR IGNORE INTO posizioni(nome) VALUES ('Frigorifero'), ('Freezer'), ('Dispensa');
       CREATE TABLE IF NOT EXISTS prodotti_personalizzati (
         codice TEXT PRIMARY KEY, dati TEXT NOT NULL CHECK(json_valid(dati)), creato_il TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS cache_prodotti_off (
+        barcode TEXT PRIMARY KEY,
+        dati TEXT NOT NULL CHECK(json_valid(dati)),
+        recuperato_il TEXT NOT NULL,
+        aggiornato_il TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS inventario (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,34 +74,7 @@ export class DatabaseFridgeBrain {
         "ALTER TABLE inventario ADD COLUMN scorta_minima REAL CHECK(scorta_minima IS NULL OR scorta_minima > 0)",
       );
     }
-    this.personale.exec("PRAGMA user_version=2");
-  }
-
-  catalogo(): DatabaseSync | null {
-    try {
-      if (!existsSync(this.percorsoCatalogo)) {
-        this.chiudiCatalogo();
-        return null;
-      }
-      const stato = statSync(this.percorsoCatalogo);
-      const impronta = `${stato.ino}:${stato.size}:${stato.mtimeMs}`;
-      if (this.alimenti && this.improntaCatalogo === impronta)
-        return this.alimenti;
-      this.chiudiCatalogo();
-      this.alimenti = new DatabaseSync(this.percorsoCatalogo, {
-        readOnly: true,
-      });
-      this.alimenti
-        .prepare(
-          "SELECT code, product_name, brands, dati FROM prodotti LIMIT 0",
-        )
-        .all();
-      this.improntaCatalogo = impronta;
-      return this.alimenti;
-    } catch {
-      this.chiudiCatalogo();
-      return null;
-    }
+    this.personale.exec("PRAGMA user_version=3");
   }
 
   transazione<T>(operazione: () => T): T {
@@ -120,14 +89,7 @@ export class DatabaseFridgeBrain {
     }
   }
 
-  chiudiCatalogo(): void {
-    this.alimenti?.close();
-    this.alimenti = null;
-    this.improntaCatalogo = "";
-  }
-
   chiudi(): void {
-    this.chiudiCatalogo();
     this.personale.close();
   }
 }

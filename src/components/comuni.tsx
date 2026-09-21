@@ -46,7 +46,7 @@ export async function chiamaApi<T>(
 ): Promise<T> {
   if (metodo !== "GET" && copiaOffline)
     throw new Error(
-      "Stai consultando una copia offline. Ricollega il server di casa e aggiorna prima di modificare i dati.",
+      "Stai consultando una copia offline. Ricollega il server e aggiorna prima di modificare i dati.",
     );
   let risposta: Response;
   try {
@@ -61,7 +61,7 @@ export async function chiamaApi<T>(
     });
   } catch {
     throw new Error(
-      "Il server di casa non è raggiungibile. Controlla la rete locale e riprova.",
+      "Il server non è raggiungibile. Controlla la connessione e riprova.",
     );
   }
   const dati = await risposta.json().catch(() => ({}));
@@ -317,9 +317,7 @@ export function InformazioniProdotto({ prodotto }: { prodotto: Prodotto }) {
         <IconaAlimento />
         <div>
           <p className="soprattitolo">
-            {prodotto.personalizzato
-              ? "Il tuo prodotto"
-              : "Open Food Facts · catalogo locale"}
+            {prodotto.personalizzato ? "Il tuo prodotto" : "Open Food Facts"}
           </p>
           <h3>{prodotto.product_name}</h3>
           <p className="secondario">

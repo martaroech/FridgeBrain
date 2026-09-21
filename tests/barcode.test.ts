@@ -67,7 +67,7 @@ test("i codici con controllo errato o lunghezza non GTIN rimangono esclusivament
       product_name: "Codice interno di prova",
     });
     assert.deepEqual(archivio.prodotto(codice), originale);
-    assert.throws(() => archivio.prodotto(alias), /catalogo/);
+    assert.throws(() => archivio.prodotto(alias), /non trovato/);
   }
 });
 

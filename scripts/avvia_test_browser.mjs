@@ -1,26 +1,25 @@
-/** Prepara il catalogo isolato prima che il server possa aprirlo, anche su Windows. */
-import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+/** Avvia OFF simulato e applicazione isolata: nessuna richiesta al servizio reale. */
+import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const radice = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const preparazione = spawnSync(
-  process.env.FRIDGEBRAIN_PYTHON ?? "python",
-  [
-    "scripts/costruisci_database_alimenti.py",
-    "--campione",
-    "--destinazione",
-    "data/processed/foods-sample.db",
-  ],
-  { encoding: "utf8", cwd: radice },
+const prodotti = JSON.parse(
+  readFileSync(resolve(radice, "tests/fixtures/prodotti_sample.json"), "utf8"),
 );
-if (preparazione.error || preparazione.status !== 0) {
-  console.error(
-    "Preparazione del catalogo di test non riuscita: " +
-      (preparazione.error?.message ?? preparazione.stderr),
+const servizioOff = createServer((richiesta, risposta) => {
+  const codice = new URL(richiesta.url, "http://localhost").pathname.match(
+    /\/product\/(\d+)\.json$/,
+  )?.[1];
+  const prodotto = prodotti.find((voce) => voce.code === codice);
+  risposta.setHeader("Content-Type", "application/json");
+  risposta.end(
+    JSON.stringify(prodotto ? { status: 1, product: prodotto } : { status: 0 }),
   );
-  process.exit(1);
-}
+});
+await new Promise((pronto) => servizioOff.listen(3101, "127.0.0.1", pronto));
 const server = spawn(
   process.execPath,
   [
