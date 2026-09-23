@@ -4,6 +4,7 @@ import {readFile,writeFile} from "node:fs/promises";
 test("backup esportato, riepilogo di importazione, annullamento e doppia conferma di cancellazione",async({page:pagina,archivioLocale:archivio},prova)=>{
   await archivio.post("/api/prodotti",{data:{code:"2099999999908",product_name:"Fagioli di casa",nutriments:{proteins_100g:7}}});
   await archivio.post("/api/inventario",{data:{codice:"2099999999908",quantita:400}});
+  await archivio.put("/api/preferenze",{data:{regime:"vegano",allergeni:[],esclusioni:[],limiti:[],priorita_scadenza:true}});
   await pagina.reload();
   await pagina.getByRole("button",{name:"Impostazioni",exact:true}).click();
   const scaricamento=pagina.waitForEvent("download");
@@ -24,12 +25,14 @@ test("backup esportato, riepilogo di importazione, annullamento e doppia conferm
   await pagina.getByRole("button",{name:"Elimina definitivamente"}).click();
   await expect(pagina.getByRole("dialog")).not.toBeVisible();
   expect((await tabella(pagina,"inventario","getAll")).length).toBe(0);
+  await expect(pagina.getByRole("combobox",{name:"Stile alimentare",exact:true})).toHaveValue("onnivoro");
   await pagina.getByLabel("File di backup").setInputFiles({name:"backup.json",mimeType:"application/json",buffer:Buffer.from(contenuto)});
   await expect(pagina.getByRole("dialog")).toContainText("inventario: 1");
   await pagina.screenshot({path:`data/verifica-visuale/backup-${prova.project.name}.png`,fullPage:true});
   expect((await tabella(pagina,"inventario","getAll")).length).toBe(0);
   await pagina.getByRole("button",{name:"Conferma e sostituisci i dati"}).click();
   await expect(pagina.getByRole("dialog")).not.toBeVisible();
+  await expect(pagina.getByRole("combobox",{name:"Stile alimentare",exact:true})).toHaveValue("vegano");
   await pagina.reload();
   expect((await tabella(pagina,"inventario","getAll"))).toEqual(backup.dati.inventario);
 });

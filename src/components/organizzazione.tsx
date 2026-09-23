@@ -281,7 +281,7 @@ export function Impostazioni({
             <Leaf size={23} />
             Alimentazione
           </h2>
-          <CampiPreferenze preferenze={stato.preferenze} />
+          <CampiPreferenze key={JSON.stringify(stato.preferenze)} preferenze={stato.preferenze} />
           <Errore testo={errore} />
           <button className="pulsante primario largo" disabled={impegnato}>
             {impegnato ? "Salvataggio…" : "Salva preferenze"}
