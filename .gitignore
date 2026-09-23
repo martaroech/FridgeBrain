@@ -143,6 +143,9 @@ $RECYCLE.BIN/
 .Spotlight-V100
 .Trashes
 Icon?
+# Risorse PWA: su Windows la regola macOS precedente intercetta anche "icone".
+!/public/icone/
+!/public/icone/*
 
 # -----------------------------------------------------------------------------
 # PWA / service worker generati

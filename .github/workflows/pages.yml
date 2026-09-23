@@ -36,9 +36,6 @@ jobs:
         run: pnpm controlla
       - name: Verifica la logica e IndexedDB
         run: pnpm test
-      - name: Prepara GitHub Pages
-        if: github.ref == 'refs/heads/main'
-        uses: actions/configure-pages@v5
       - name: Genera out e prepara la PWA
         run: pnpm build
       - name: Installa Chromium per i test
@@ -63,6 +60,8 @@ jobs:
       name: github-pages
       url: ${{ steps.pubblicazione.outputs.page_url }}
     steps:
+      - name: Prepara GitHub Pages
+        uses: actions/configure-pages@v5
       - name: Pubblica il sito
         id: pubblicazione
         uses: actions/deploy-pages@v4
