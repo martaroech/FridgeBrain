@@ -28,8 +28,8 @@ Ispezionate le schermate effettive nei tre formati. Nessun redesign o normalizza
 
 ## Pubblicazione e limiti residui
 
-**GitHub Pages non è ancora attivo.** L'API GitHub ha restituito 422: «Your current plan does not support GitHub Pages for this repository». La repository è privata. Per pubblicare è necessario renderla pubblica oppure usare un piano compatibile, poi selezionare Pages → GitHub Actions e rilanciare il workflow su main. La visibilità non è stata modificata e non è stato acquistato alcun piano. Il job di verifica resta distinto dal job di deployment, così questo vincolo non impedisce il collaudo del codice.
+**GitHub Pages è attivo.** Dopo che l'utente ha reso pubblica la repository, è stata abilitata l'origine GitHub Actions e rilanciato con successo il deployment di main. Il precedente limite del piano è risolto. Sul sito pubblico sono stati verificati HTTP 200, manifest, icone, service worker sotto `/FridgeBrain/`, recupero OFF reale e successiva rilettura da IndexedDB offline, senza errori JavaScript.
 
 Dati esclusivamente nel browser, nessuna sincronizzazione tra dispositivi o recupero cloud. Cancellare i dati del sito può cancellare l'inventario. Backup/trasferimento tramite JSON (limite 25 MiB), senza conversione automatica degli archivi delle versioni server. Nessuna crittografia o autenticazione locale. Generatore AI disabilitato; account, sincronizzazione, OCR e riconoscimento visivo restano fuori ambito.
 
-L'installazione su telefono fisico e l'accesso all'URL pubblico richiedono la risoluzione del vincolo Pages; installabilità, percorso, permessi e decodifica sono stati verificati in Chromium con formati mobile. [Dettagli del collaudo Pages](verifica-pages.md).
+L'URL pubblico è disponibile; l'installazione su telefono fisico richiede l'azione dell'utente e il consenso ai permessi. Installabilità, percorso, permessi e decodifica sono stati verificati in Chromium con formati mobile. [Dettagli del collaudo Pages](verifica-pages.md).

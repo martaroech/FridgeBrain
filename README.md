@@ -6,7 +6,7 @@ Indirizzo previsto: **https://martaroech.github.io/FridgeBrain/**. Restano Next.
 
 ## Pubblicazione GitHub Pages
 
-**Stato verificato il 23 settembre 2026:** la repository è privata e GitHub ha rifiutato l'attivazione di Pages con «Your current plan does not support GitHub Pages for this repository». Prima del deployment occorre rendere pubblica la repository oppure usare un piano GitHub compatibile con Pages per repository private. La migrazione non cambia automaticamente visibilità o piano. Finché Pages non è abilitato, i controlli della build possono passare ma il job di pubblicazione non può riuscire.
+**Pubblicazione attiva:** dopo il passaggio della repository a pubblica, GitHub Pages è stato abilitato con origine GitHub Actions e il deployment è riuscito. App disponibile su **https://martaroech.github.io/FridgeBrain/**. Verificati dal sito pubblico HTTPS, manifest, icone, service worker, ricerca OFF e rilettura dalla cache offline.
 
 1. Nella repository `martaroech/FridgeBrain`: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 2. Porta queste modifiche sul ramo `main` e inviale a GitHub.
