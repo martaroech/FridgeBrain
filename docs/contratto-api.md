@@ -1,30 +1,33 @@
-# Contratto applicativo
+# Contratto del client locale
 
-Next.js App Router, Node 24, `node:sqlite`; tipi condivisi in `src/lib/tipi.ts`.
-Risposte JSON dirette; errori `{errore: string}`, stato HTTP coerente. Autenticazione HTTP Basic obbligatoria per tutte le API personali; 401 con challenge se credenziali assenti/errate, 503 se configurazione assente. OFF remoto solo per barcode non ancora in cache; provider LLM invariato.
+Le schermate conservano `chiamaApi<T>(percorso, metodo?, corpo?, chiave?)`, ma non viene eseguito alcun HTTP verso FridgeBrain. `src/lib/api.ts` traduce gli identificatori storici `/api/...` in metodi asincroni di `ArchivioFridgeBrain`, su IndexedDB. Non esistono route API Next.js, autenticazione o processo applicativo remoto. I tipi in `src/lib/tipi.ts` sono preservati.
 
-- `GET /api/stato` → StatoApplicazione.
-- `GET /api/prodotti?codice=...` → Prodotto; personalizzati/cache prima di OFF; 400 codice invalido, 404 assente, 429 limite, 502 risposta non valida, 503 rete/servizio, 504 timeout.
-- `GET /api/prodotti?q=...` → Prodotto[] massimo 30, soltanto cache e personalizzati.
-- `POST /api/prodotti` → prodotto personalizzato; corpo Prodotto, validazione server.
-- `POST /api/inventario` → VoceInventario; corpo `{codice, confezioni, quantita, unita, posizione, scadenza}`. Quantità totale residua misurata in g/ml/pz, opzionale; non per confezione. Il prodotto viene copiato in snapshot nel database personale.
-- `PATCH /api/inventario/:id` → voce; campi confezioni, quantita, unita, posizione, scadenza.
-- `DELETE /api/inventario/:id` → `{ok:true}`; storico eliminazione.
-- `POST /api/inventario/:id/consuma` → `{ok:true}`; corpo `{quantita?:number}`, assente consuma intero; consumo parziale richiede quantità misurata.
-- `POST /api/spesa` corpo `{nome,quantita}` → VoceSpesa.
-- `PATCH /api/spesa/:id` corpo `{completato?,nome?,quantita?}` → voce.
-- `DELETE /api/spesa/:id` → `{ok:true}`.
-- `PUT /api/preferenze` corpo Preferenze → preferenze.
-- `POST /api/ricette` corpo RichiestaRicetta → Ricetta; richiede provider configurato, non abilita simulazione implicitamente.
-- `POST /api/ricette/:id/prepara` → `{ok:true}`; rilegge inventario e valida transazionalmente quantità, scadenze e restrizioni, impedisce doppio consumo.
-- `GET /api/storico` → EventoStorico[] ultimi 200.
-- `GET /api/salute` → `{ok:true}, unica API pubblica`.
+| Identificatore interno | Risultato |
+| --- | --- |
+| `GET /api/stato` | StatoApplicazione consistente in una transazione di lettura |
+| `GET /api/prodotti?codice=...` | Prodotto locale o recuperato direttamente da OFF |
+| `GET /api/prodotti?q=...` | Fino a 30 prodotti locali |
+| `POST /api/prodotti` | Crea prodotto personalizzato validato |
+| `PATCH/DELETE /api/prodotti/:codice` | Modifica/elimina personalizzato senza alterare snapshot |
+| `GET/POST /api/inventario` | Elenco o aggiunta con snapshot prodotto |
+| `GET/PATCH/DELETE /api/inventario/:id` | Dettaglio, modifica o eliminazione con storico |
+| `POST /api/inventario/:id/consuma` | Consumo parziale `{quantita}` o totale con corpo vuoto |
+| `GET/POST /api/spesa` | Elenco o aggiunta `{nome,quantita}` |
+| `PATCH/DELETE /api/spesa/:id` | Spunta, modifica o eliminazione |
+| `GET/PUT /api/preferenze` | Legge/salva Preferenze |
+| `GET/POST /api/posizioni` | Elenco o aggiunta `{nome}` |
+| `DELETE /api/posizioni/:nome` | Rimuove posizione vuota aggiuntiva |
+| `GET /api/ricette`, `GET/DELETE /api/ricette/:id` | Ricette salvate e dettaglio |
+| `POST /api/ricette` | Disabilitato nella build Pages; provider iniettabile nei test |
+| `POST /api/ricette/:id/prepara` | Rivalida e consuma atomicamente una sola volta |
+| `GET /api/storico` | Ultimi 200 eventi |
 
-Il motore in `src/lib/motore.ts` espone `generaRicettaVerificata(inventario, richiesta, configurazione?)`: restituisce la proposta con nutrizione, avvisi, nomi degli ingredienti e provider. `validaRicetta(proposta,inventario,richiesta)` verifica quantità, scadenze e restrizioni oppure solleva un errore. Il backend salva la richiesta insieme alla ricetta per rivalidarla prima del consumo.
+Gli errori sono eccezioni con messaggi italiani e, quando applicabile, il codice numerico precedente (`ErroreApplicazione.stato`), senza risposta HTTP. Creazioni e consumi accettano una chiave di operazione; stessa chiave e stessi dati riutilizzano il risultato, dati differenti producono conflitto. Le ricevute e le modifiche vengono scritte insieme.
 
-`POST /api/prodotti`, `POST /api/inventario`, `POST /api/spesa` e il consumo inventario accettano `Idempotency-Key`: una ripetizione con la stessa chiave e gli stessi dati restituisce l’esito già registrato. Il riutilizzo con dati diversi restituisce 409. Il client conserva la chiave durante i tentativi della stessa operazione; una nuova aggiunta intenzionale usa una nuova chiave.
+Quantità totale residua in g/ml/pz, indipendente dal numero di confezioni. `scorta_minima` positiva nella stessa unità; `null` la disattiva. Scadenze per giorno civile e posizioni verificate. Gli ID sono interi positivi. `catalogo_disponibile` resta `true` per compatibilità, senza promettere disponibilità della rete.
 
-Il campo inventario facoltativo `scorta_minima` è una quantità positiva nella stessa unità del residuo. `null` disattiva l’avviso; la soglia richiede una quantità residua misurata. Lo schema personale versione 2 aggiunge la colonna senza ricreare tabelle o cancellare dati. La versione 3 aggiunge `cache_prodotti_off` senza ricreare i dati personali. Il campo `catalogo_disponibile` in StatoApplicazione resta `true` per compatibilità e indica il servizio di lookup configurato, non una prova della raggiungibilità di OFF.
+Il motore nutrizionale e `validaRicetta` restano deterministici. Una ricetta salva anche la richiesta iniziale e viene rivalidata rispetto alle preferenze correnti prima del consumo. Generazione Pages disabilitata, provider locale e simulato conservati per sviluppi futuri e test.
 
-Sono disponibili anche gli elenchi `GET /api/inventario`, `/api/spesa`, `/api/ricette`, `/api/preferenze`, `/api/posizioni`; i dettagli inventario e ricetta per identificatore; modifica/eliminazione prodotti personalizzati; eliminazione ricette; aggiunta e rimozione delle posizioni aggiuntive. Le tre posizioni iniziali sono protette. Le API usano JSON, corpi limitati a 128 KiB e controlli di origine per le modifiche; gli header proxy non autorizzano automaticamente nuove origini.
-Configurazione da ambiente: FRIDGEBRAIN_DATI (default data), FRIDGEBRAIN_UTENTE, FRIDGEBRAIN_PASSWORD, FRIDGEBRAIN_OFF_USER_AGENT, FRIDGEBRAIN_OFF_URL, FRIDGEBRAIN_GENERATORE (disabilitato|locale|simulato), FRIDGEBRAIN_OLLAMA_URL, FRIDGEBRAIN_MODELLO. Provider simulato esclusivamente sviluppo/test, esplicitamente etichettato. Frontend riporta stato server.
+## Backup e cancellazione
+
+`esportaBackup(database)` legge insieme tutte le tabelle. `validaBackup(valore)` controlla formato `FridgeBrain`, versione 1 e dati senza modificare il database. `importaBackup(database,valore)` valida nuovamente e sostituisce tutte le tabelle in una transazione; errori provocano rollback. La UI mostra conteggi/data e richiede conferma prima della chiamata. `cancellaDati(database)` svuota tutte le tabelle e ripristina le tre posizioni iniziali, dopo doppia conferma della UI. Limite file 25 MiB. Nessuna sincronizzazione fra dispositivi.

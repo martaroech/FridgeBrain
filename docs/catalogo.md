@@ -1,30 +1,30 @@
-# Prodotti Open Food Facts e cache
+# Prodotti Open Food Facts e cache browser
 
-L'accesso runtime usa esclusivamente l'API pubblica v2 per barcode e la tabella SQLite personale `cache_prodotti_off`. Non sono richiesti import preliminari. Gli originali storici in `data/raw/` rimangono intatti e inutilizzati.
+Il catalogo utilizza la tabella IndexedDB `cache_prodotti_off` e le API pubbliche HTTPS di Open Food Facts, direttamente dal browser. Nessun import preliminare, proxy o database alimentare. Gli originali storici in `data/raw/` rimangono intatti e inutilizzati.
 
-## Contratto
+## Recupero e ricerca
 
-`GET /api/prodotti?codice=...` conserva la risposta `Prodotto` esistente. Le corrispondenze esatte precedono gli alias GTIN verificati; a parità di codice il personalizzato precede la cache. Se manca il prodotto, `recuperaProdotto` interroga `/api/v2/product/{barcode}.json` con campi selezionati e User-Agent FridgeBrain configurabile. Richieste contemporanee dello stesso GTIN condividono il recupero.
+`recuperaProdotto` valida il barcode e cerca nei dati locali. Una corrispondenza esatta precede gli alias GTIN verificati; a parità di codice, il prodotto personalizzato conserva la precedenza per permettere correzioni manuali. In assenza di risultati viene interrogato `https://world.openfoodfacts.org/api/v2/product/{barcode}.json` con i soli campi utilizzati. Dopo validazione, il prodotto è salvato in IndexedDB. Richieste simultanee dello stesso GTIN nella scheda condividono il recupero.
 
-`cercaProdotti` interroga soltanto cache e personalizzati per nome, marca e codice con parametri SQL. Non chiama la ricerca remota OFF. `prodotto` resta sincrono per le transazioni d'inventario; il confine HTTP chiama il recupero asincrono prima dell'aggiunta. Le ricevute idempotenti già registrate restano utilizzabili anche svuotando la cache.
+Il browser controlla User-Agent: l'app si identifica mediante il parametro `user_agent=FridgeBrain/1.0 (https://martaroech.github.io/FridgeBrain/)`, senza credenziali. Inventario e preferenze non vengono trasmessi. Non occorre una chiave API. [Documentazione OFF](https://openfoodfacts.github.io/openfoodfacts-server/api/).
 
-## Schema versione 3
+`cercaProdotti` cerca nome, marca e codice solo fra personalizzati e cache, fino a 30 risultati. Tutte le operazioni sono asincrone. La rete resta fuori dalle transazioni IndexedDB; l'inventario copia uno snapshot indipendente del prodotto. Ricevute già registrate funzionano anche dopo la rimozione della cache.
 
-| Colonna         | Contenuto                                            |
-| --------------- | ---------------------------------------------------- |
-| `barcode`       | Chiave primaria testuale, mantiene gli zeri iniziali |
-| `dati`          | JSON normalizzato con campi originali OFF            |
-| `recuperato_il` | Primo recupero UTC                                   |
-| `aggiornato_il` | Ultima scrittura UTC                                 |
+## Schema
 
-La migrazione è additiva. L'upsert conserva il primo recupero e aggiorna prodotto e data dell'ultima scrittura. Non vengono modificati snapshot d'inventario o ricette.
+| Campo | Contenuto |
+| --- | --- |
+| `barcode` | Chiave testuale, zeri iniziali conservati |
+| `dati` | Oggetto prodotto normalizzato con nomi originali OFF |
+| `recuperato_il` | Primo recupero UTC |
+| `aggiornato_il` | Ultima scrittura UTC |
 
-La cache non scade automaticamente. Per un aggiornamento puntuale amministrativo, ferma l'app ed esegui un backup; con un client SQLite elimina soltanto `DELETE FROM cache_prodotti_off WHERE barcode='CODICE';`, poi riavvia e scansiona nuovamente. La ricerca successiva ripopola la riga. Non eliminare il database personale. Un'interfaccia di aggiornamento automatico della cache è fuori da questa migrazione.
+L'aggiornamento conserva la prima data e non modifica gli snapshot già in inventario. La cache non scade automaticamente: scansioni successive non richiedono rete. Non è prevista un'interfaccia di aggiornamento periodico. Cache e metadati sono inclusi nel backup JSON.
 
-## Validazione ed errori
+## Errori e dati mancanti
 
-Codici numerici da 4 a 32 caratteri mantengono compatibilità con codici interni esistenti; soltanto GTIN con checksum valido generano alias. OFF deve restituire il codice richiesto o un alias ammesso e un nome non vuoto. Campi opzionali sono verificati per tipo; dati mancanti non diventano zero o assenze certificate. Il motore nutrizionale e le regole alimentari esistenti interpretano i dati.
+Barcode numerici da 4 a 32 caratteri; solo GTIN con checksum valido generano alias. OFF deve restituire il codice richiesto o un alias ammesso e un nome non vuoto. I campi opzionali vengono controllati per tipo; nutrienti e allergeni assenti restano sconosciuti.
 
-Tempo massimo 8 secondi inclusa lettura del corpo; massimo 2 MiB, redirect rifiutati. 400 codice non valido; 404 prodotto assente; 429 limite richieste con pausa di un minuto; 502 risposta non valida; 503 rete o servizio indisponibile; 504 timeout. Errori non salvati in cache e nessun retry automatico ripetuto. Il servizio ufficiale non richiede una chiave API per queste letture. Usare `FRIDGEBRAIN_OFF_USER_AGENT` con nome, versione e URL/contatto reale.
+Timeout di 8 secondi compresa la lettura del corpo, limite 2 MiB, redirect rifiutati. Codici applicativi: 400 barcode non valido, 404 assente, 429 limite richieste, 502 risposta non valida, 503 rete/servizio indisponibile, 504 timeout. Dopo un 429, pausa di un minuto sui nuovi recuperi nella scheda. Nessun risultato negativo in cache e nessun retry automatico ripetuto. I dati locali restano utilizzabili durante gli errori OFF.
 
-Riferimenti: [API OFF](https://openfoodfacts.github.io/openfoodfacts-server/api/ref-cheatsheet/) e [regole di utilizzo](https://github.com/openfoodfacts/openfoodfacts-server/blob/main/docs/api/index.md). Nei test tutte le risposte sono simulate; venti fixture reali verificano nome, barcode, nutrienti, ingredienti e allergeni.
+Nei test HTTP e browser OFF è simulato, incluse le equivalenze GTIN; venti fixture reali verificano nome esatto, barcode, nutrienti, ingredienti e allergeni. Non si dipende dalla disponibilità del servizio pubblico.
