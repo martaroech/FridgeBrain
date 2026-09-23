@@ -1,4 +1,5 @@
 "use client";
+import { GestioneBackup } from "./backup";
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -292,8 +293,8 @@ export function Impostazioni({
           </span>
           <h2>I tuoi dati, protetti.</h2>
           <p>
-            Inventario, preferenze e ricette sono conservati sul tuo server
-            personale, protetto dalle tue credenziali.
+            Inventario, preferenze e ricette restano soltanto in questo browser.
+            Nessun account e nessuna sincronizzazione tra dispositivi.
           </p>
           <dl className="stato-sistema">
             <div>
@@ -311,45 +312,9 @@ export function Impostazioni({
               </dd>
             </div>
           </dl>
-          <details className="dettagli">
-            <summary>Configurare il generatore locale</summary>
-            <div className="contenuto-dettagli">
-              <p>
-                Installa Ollama sul server e scarica un modello. Nel file di
-                configurazione imposta:
-              </p>
-              <code className="blocco-codice">
-                FRIDGEBRAIN_GENERATORE=locale
-                <br />
-                FRIDGEBRAIN_MODELLO=nome-del-modello
-                <br />
-                FRIDGEBRAIN_OLLAMA_URL=http://127.0.0.1:11434
-              </code>
-              <p className="nota">
-                Riavvia il server dopo le modifiche. Consulta il README del
-                progetto per Docker e la configurazione completa.
-              </p>
-            </div>
-          </details>
-          <details className="dettagli">
-            <summary>Installazione e backup</summary>
-            <div className="contenuto-dettagli">
-              <p>
-                Per installare l’app usa «Installa» o «Aggiungi alla schermata
-                Home» nel menu del browser. Su smartphone usa l’indirizzo HTTPS
-                del tuo server.
-              </p>
-              <p>
-                Per conservare i tuoi dati esegui il backup di fridgebrain.db
-                seguendo le istruzioni nel README. Il backup include anche i
-                prodotti recuperati da Open Food Facts.
-              </p>
-              <p className="nota">
-                Il server deve essere raggiungibile. I nuovi barcode richiedono
-                anche il collegamento del server a Open Food Facts.
-              </p>
-            </div>
-          </details>
+          <p className="nota">Il generatore AI è disabilitato nella versione GitHub Pages. Le ricette salvate e i calcoli nutrizionali restano disponibili.</p>
+          <p className="nota">Installa l’app dal menu del browser. Puoi gestire i tuoi dati anche offline; un nuovo barcode richiede Internet verso Open Food Facts.</p>
+          <GestioneBackup aggiorna={async()=>{await aggiorna();impostaStorico(await chiamaApi<EventoStorico[]>("/api/storico"));}} notifica={notifica}/>
         </aside>
       </div>
       <section className="storico">

@@ -19,7 +19,6 @@ import {
 import { recuperaDaOff, ErroreOpenFoodFacts } from "./open-food-facts";
 
 type Oggetto = Record<string, unknown>;
-type Riga = Record<string, unknown>;
 const nutrienti = [
   "calorie",
   "carboidrati",
@@ -39,13 +38,13 @@ export class ErroreApplicazione extends Error {
   }
 }
 
-function oggetto(valore: unknown): Oggetto {
+export function oggetto(valore: unknown): Oggetto {
   if (!valore || typeof valore !== "object" || Array.isArray(valore))
     throw new ErroreApplicazione("I dati inviati non sono validi.");
   return valore as Oggetto;
 }
 
-function testo(
+export function testo(
   valore: unknown,
   nome: string,
   massimo = 200,
@@ -62,7 +61,7 @@ function testo(
   return valore.trim();
 }
 
-function numero(
+export function numero(
   valore: unknown,
   nome: string,
   minimo = 0,
@@ -194,7 +193,7 @@ export function validaPreferenze(valore: unknown): Preferenze {
   };
 }
 
-function validaRichiesta(valore: unknown): RichiestaRicetta {
+export function validaRichiesta(valore: unknown): RichiestaRicetta {
   const dati = oggetto(valore);
   return {
     ...validaPreferenze(dati),
@@ -241,7 +240,7 @@ function applicaPreferenzeSalvate(
   return { ...richiesta, ...unite };
 }
 
-function validaProdotto(valore: unknown): Prodotto {
+export function validaProdotto(valore: unknown): Prodotto {
   const dati = oggetto(valore);
   const prodotto: Prodotto = {
     code: validaCodice(dati.code),
@@ -309,322 +308,116 @@ function validaProdotto(valore: unknown): Prodotto {
   return prodotto;
 }
 
-function voceInventario(riga: Riga): VoceInventario {
-  return {
-    id: Number(riga.id),
-    prodotto: JSON.parse(String(riga.prodotto)),
-    confezioni: Number(riga.confezioni),
-    quantita: riga.quantita === null ? null : Number(riga.quantita),
-    scorta_minima:
-      riga.scorta_minima == null ? null : Number(riga.scorta_minima),
-    unita: riga.unita as Unita,
-    posizione: String(riga.posizione),
-    scadenza: riga.scadenza === null ? null : String(riga.scadenza),
-    inserito_il: String(riga.inserito_il),
-  };
-}
-
-function voceSpesa(riga: Riga): VoceSpesa {
-  return {
-    id: Number(riga.id),
-    nome: String(riga.nome),
-    quantita: String(riga.quantita),
-    completato: Boolean(riga.completato),
-    inserito_il: String(riga.inserito_il),
-  };
-}
-
-function voceRicetta(riga: Riga): Ricetta {
-  return {
-    ...JSON.parse(String(riga.dati)),
-    id: Number(riga.id),
-    creata_il: String(riga.creata_il),
-    preparata_il: riga.preparata_il === null ? null : String(riga.preparata_il),
-  };
-}
-
-export function generatoreConfigurato(): StatoApplicazione["generatore"] {
-  const valore = process.env.FRIDGEBRAIN_GENERATORE;
-  return valore === "locale" || valore === "simulato" ? valore : "disabilitato";
-}
+export function generatoreConfigurato(): StatoApplicazione["generatore"] { return "disabilitato"; }
 
 export class ArchivioFridgeBrain {
   readonly database: DatabaseFridgeBrain;
-  constructor(private readonly configurazione: ConfigurazioneArchivio = {}) {
-    this.database = new DatabaseFridgeBrain(configurazione);
-  }
+  private richiesteOff = new Map<string, Promise<Prodotto>>();
+  private riprendiOffDal = 0;
+  constructor(private readonly configurazione: ConfigurazioneArchivio = {}) { this.database = new DatabaseFridgeBrain(configurazione); }
 
-  private eseguiRipetibile<T>(
-    chiave: string | undefined,
-    firma: string,
-    operazione: () => T,
-  ): T {
+  private async eseguiRipetibile<T>(chiave: string | undefined, firma: string, operazione: () => Promise<T>): Promise<T> {
     if (chiave !== undefined) testo(chiave, "Chiave dell'operazione", 100);
-    return this.database.transazione(() => {
-      if (chiave) {
-        const precedente = this.database.personale
-          .prepare("SELECT firma FROM operazioni WHERE chiave=?")
-          .get(chiave);
-        if (precedente) {
-          const salvata = JSON.parse(String(precedente.firma)) as {
-            firma?: string;
-            risultato?: T;
-          };
-          if (salvata.firma !== firma)
-            throw new ErroreApplicazione(
-              "Questa operazione è già stata usata con dati diversi.",
-              409,
-            );
-          return salvata.risultato as T;
-        }
+    return this.database.transazione(async () => {
+      const precedente = chiave ? await this.database.operazioni.get(chiave) : undefined;
+      if (precedente) {
+        if (precedente.firma !== firma) throw new ErroreApplicazione("Questa operazione è già stata usata con dati diversi.", 409);
+        return precedente.risultato as T;
       }
-      const risultato = operazione();
-      if (chiave)
-        this.database.personale
-          .prepare(
-            "INSERT INTO operazioni(chiave,firma,creato_il) VALUES (?,?,?)",
-          )
-          .run(
-            chiave,
-            JSON.stringify({ firma, risultato }),
-            new Date().toISOString(),
-          );
+      const risultato = await operazione();
+      if (chiave) await this.database.operazioni.add({chiave, firma, risultato, creato_il: new Date().toISOString()});
       return risultato;
     });
   }
-
-  stato(): StatoApplicazione {
-    return {
-      inventario: this.inventario(),
-      spesa: this.spesa(),
-      ricette: this.ricette(),
-      preferenze: this.preferenze(),
-      posizioni: this.posizioni(),
-      catalogo_disponibile: true,
-      generatore: generatoreConfigurato(),
-    };
+  async stato(): Promise<StatoApplicazione> {
+    return this.database.transaction("r", this.database.tables, async () => ({
+      inventario: await this.inventario(), spesa: await this.spesa(), ricette: await this.ricette(),
+      preferenze: await this.preferenze(), posizioni: await this.posizioni(), catalogo_disponibile: true,
+      generatore: this.configurazione.generatore ? "simulato" : "disabilitato",
+    }));
   }
-
-  posizioni(): string[] {
-    return this.database.personale
-      .prepare(
-        "SELECT nome FROM posizioni ORDER BY CASE nome WHEN 'Frigorifero' THEN 1 WHEN 'Freezer' THEN 2 WHEN 'Dispensa' THEN 3 ELSE 4 END, nome",
-      )
-      .all()
-      .map((riga) => String(riga.nome));
-  }
-
-  aggiungiPosizione(valore: unknown): string[] {
-    const nome = testo(oggetto(valore).nome, "Nome della posizione", 60);
-    if (
-      this.posizioni().some(
-        (posizione) => posizione.toLowerCase() === nome.toLowerCase(),
-      )
-    )
-      throw new ErroreApplicazione(
-        "Esiste già una posizione con questo nome.",
-        409,
-      );
-    this.database.personale
-      .prepare("INSERT INTO posizioni(nome) VALUES (?)")
-      .run(nome);
-    return this.posizioni();
-  }
-
-  eliminaPosizione(nome: string): void {
-    if (["Frigorifero", "Freezer", "Dispensa"].includes(nome))
-      throw new ErroreApplicazione(
-        "Le posizioni iniziali non possono essere eliminate.",
-      );
-    this.database.transazione(() => {
-      if (
-        this.database.personale
-          .prepare("SELECT id FROM inventario WHERE posizione=? LIMIT 1")
-          .get(nome)
-      )
-        throw new ErroreApplicazione(
-          "Sposta prima i prodotti presenti in questa posizione.",
-          409,
-        );
-      if (
-        !this.database.personale
-          .prepare("DELETE FROM posizioni WHERE nome=?")
-          .run(nome).changes
-      )
-        throw new ErroreApplicazione("Posizione non trovata.", 404);
+  async posizioni(): Promise<string[]> {
+    return (await this.database.posizioni.toArray()).map((riga) => riga.nome).sort((a,b) => {
+      const ordine = (nome: string) => ["Frigorifero", "Freezer", "Dispensa"].indexOf(nome);
+      return (ordine(a) < 0 ? 3 : ordine(a)) - (ordine(b) < 0 ? 3 : ordine(b)) || a.localeCompare(b);
     });
   }
-
-  private richiesteOff = new Map<string, Promise<Prodotto>>();
-  private riprendiOffDal = 0;
-
-  salvaCacheOff(prodotto: Prodotto): void {
-    const adesso = new Date().toISOString();
-    this.database.personale
-      .prepare(
-        "INSERT INTO cache_prodotti_off(barcode,dati,recuperato_il,aggiornato_il) VALUES (?,?,?,?) ON CONFLICT(barcode) DO UPDATE SET dati=excluded.dati,aggiornato_il=excluded.aggiornato_il",
-      )
-      .run(prodotto.code, JSON.stringify(prodotto), adesso, adesso);
+  async aggiungiPosizione(valore: unknown): Promise<string[]> {
+    const nome = testo(oggetto(valore).nome, "Nome della posizione", 60);
+    return this.database.transazione(async () => {
+      if ((await this.posizioni()).some((posizione) => posizione.toLowerCase() === nome.toLowerCase())) throw new ErroreApplicazione("Esiste già una posizione con questo nome.",409);
+      await this.database.posizioni.add({nome}); return this.posizioni();
+    });
   }
-
-  /** Lookup sincrono dei dati noti: mantiene atomiche le operazioni d'inventario. */
-  prodotto(codiceRichiesto: unknown): Prodotto {
+  async eliminaPosizione(nome: string): Promise<void> {
+    if (["Frigorifero", "Freezer", "Dispensa"].includes(nome)) throw new ErroreApplicazione("Le posizioni iniziali non possono essere eliminate.");
+    await this.database.transazione(async () => {
+      if (await this.database.inventario.where("posizione").equals(nome).count()) throw new ErroreApplicazione("Sposta prima i prodotti presenti in questa posizione.",409);
+      if (!(await this.database.posizioni.get(nome))) throw new ErroreApplicazione("Posizione non trovata.",404);
+      await this.database.posizioni.delete(nome);
+    });
+  }
+  async salvaCacheOff(prodotto: Prodotto): Promise<void> {
+    await this.database.transazione(async () => {
+      const adesso = new Date().toISOString(); const precedente = await this.database.cache_prodotti_off.get(prodotto.code);
+      await this.database.cache_prodotti_off.put({barcode: prodotto.code, dati: prodotto, recuperato_il: precedente?.recuperato_il ?? adesso, aggiornato_il: adesso});
+    });
+  }
+  async prodotto(codiceRichiesto: unknown): Promise<Prodotto> {
     const codice = validaCodice(codiceRichiesto);
     for (const candidato of [codice, ...codiciGtinEquivalenti(codice)]) {
-      const riga =
-        this.database.personale
-          .prepare("SELECT dati FROM prodotti_personalizzati WHERE codice=?")
-          .get(candidato) ??
-        this.database.personale
-          .prepare("SELECT dati FROM cache_prodotti_off WHERE barcode=?")
-          .get(candidato);
-      if (riga) return JSON.parse(String(riga.dati));
+      const riga = await this.database.prodotti_personalizzati.get(candidato) ?? await this.database.cache_prodotti_off.get(candidato);
+      if (riga) return riga.dati;
     }
-    throw new ErroreApplicazione(
-      "Prodotto non trovato. Puoi inserirlo manualmente.",
-      404,
-    );
+    throw new ErroreApplicazione("Prodotto non trovato. Puoi inserirlo manualmente.",404);
   }
-
   async recuperaProdotto(codiceRichiesto: unknown): Promise<Prodotto> {
     const codice = validaCodice(codiceRichiesto);
-    try {
-      return this.prodotto(codice);
-    } catch (errore) {
-      if (!(errore instanceof ErroreApplicazione) || errore.stato !== 404)
-        throw errore;
-    }
-    const equivalenti = codiciGtinEquivalenti(codice);
-    const chiave = [codice, ...equivalenti].sort()[0];
-    const pendente = this.richiesteOff.get(chiave);
-    if (pendente) return pendente;
-    if (Date.now() < this.riprendiOffDal)
-      throw new ErroreApplicazione(
-        "Open Food Facts ha raggiunto il limite di richieste. Attendi qualche minuto e riprova.",
-        429,
-      );
-    const richiesta = recuperaDaOff(codice, equivalenti, this.configurazione)
-      .then((prodotto) => {
-        this.salvaCacheOff(prodotto);
-        return prodotto;
-      })
-      .catch((errore: unknown) => {
-        if (errore instanceof ErroreOpenFoodFacts) {
-          if (errore.stato === 429) this.riprendiOffDal = Date.now() + 60_000;
-          throw new ErroreApplicazione(errore.message, errore.stato);
-        }
-        throw errore;
-      })
-      .finally(() => this.richiesteOff.delete(chiave));
-    this.richiesteOff.set(chiave, richiesta);
-    return richiesta;
+    try { return await this.prodotto(codice); } catch (errore) { if (!(errore instanceof ErroreApplicazione) || errore.stato !== 404) throw errore; }
+    const equivalenti = codiciGtinEquivalenti(codice); const chiave = [codice, ...equivalenti].sort()[0];
+    const pendente = this.richiesteOff.get(chiave); if (pendente) return pendente;
+    if (Date.now() < this.riprendiOffDal) throw new ErroreApplicazione("Open Food Facts ha raggiunto il limite di richieste. Attendi qualche minuto e riprova.",429);
+    const richiesta = recuperaDaOff(codice, equivalenti, this.configurazione).then(async (prodotto) => { await this.salvaCacheOff(prodotto); return prodotto; }).catch((errore: unknown) => {
+      if (errore instanceof ErroreOpenFoodFacts) { if (errore.stato === 429) this.riprendiOffDal = Date.now()+60_000; throw new ErroreApplicazione(errore.message, errore.stato); } throw errore;
+    }).finally(() => this.richiesteOff.delete(chiave));
+    this.richiesteOff.set(chiave, richiesta); return richiesta;
   }
-
-  cercaProdotti(valore: unknown): Prodotto[] {
-    const ricerca = testo(valore, "Ricerca", 100, true);
-    if (ricerca.length < 2) return [];
-    const risultati = new Map<string, Prodotto>();
-    const modello = `%${ricerca.replace(/[\\%_]/g, "\\$&")}%`;
-    for (const tabella of ["prodotti_personalizzati", "cache_prodotti_off"]) {
-      const codice =
-        tabella === "prodotti_personalizzati" ? "codice" : "barcode";
-      const righe = this.database.personale
-        .prepare(
-          `SELECT dati FROM ${tabella} WHERE json_extract(dati,'$.product_name') LIKE ? ESCAPE '\\' OR json_extract(dati,'$.brands') LIKE ? ESCAPE '\\' OR ${codice}=? LIMIT 30`,
-        )
-        .all(modello, modello, ricerca);
-      for (const riga of righe) {
-        const prodotto = JSON.parse(String(riga.dati)) as Prodotto;
-        if (!risultati.has(prodotto.code))
-          risultati.set(prodotto.code, prodotto);
-      }
+  async cercaProdotti(valore: unknown): Promise<Prodotto[]> {
+    const ricerca = testo(valore,"Ricerca",100,true).toLocaleLowerCase("it"); if (ricerca.length < 2) return [];
+    const risultati = new Map<string,Prodotto>();
+    for (const tabella of [this.database.prodotti_personalizzati, this.database.cache_prodotti_off]) {
+      for (const riga of await tabella.filter((riga) => [riga.dati.product_name, riga.dati.brands ?? "", riga.dati.code].some((campo) => campo.toLocaleLowerCase("it").includes(ricerca))).limit(30).toArray())
+        if (!risultati.has(riga.dati.code)) risultati.set(riga.dati.code, riga.dati);
     }
-    return [...risultati.values()].slice(0, 30);
+    return [...risultati.values()].slice(0,30);
   }
-
-  salvaProdotto(
-    valore: unknown,
-    codiceEsistente?: string,
-    chiave?: string,
-  ): Prodotto {
+  async salvaProdotto(valore: unknown, codiceEsistente?: string, chiave?: string): Promise<Prodotto> {
     const prodotto = validaProdotto(valore);
-    if (codiceEsistente && prodotto.code !== codiceEsistente)
-      throw new ErroreApplicazione(
-        "Il codice a barre non può essere modificato.",
-      );
-    const salva = () => {
-      const esiste = this.database.personale
-        .prepare("SELECT codice FROM prodotti_personalizzati WHERE codice=?")
-        .get(prodotto.code);
-      if (codiceEsistente && !esiste)
-        throw new ErroreApplicazione(
-          "Prodotto personalizzato non trovato.",
-          404,
-        );
-      if (!codiceEsistente && esiste)
-        throw new ErroreApplicazione(
-          "Esiste già un prodotto personalizzato con questo codice a barre.",
-          409,
-        );
-      if (codiceEsistente)
-        this.database.personale
-          .prepare("UPDATE prodotti_personalizzati SET dati=? WHERE codice=?")
-          .run(JSON.stringify(prodotto), prodotto.code);
-      else
-        this.database.personale
-          .prepare(
-            "INSERT INTO prodotti_personalizzati(codice,dati,creato_il) VALUES (?,?,?)",
-          )
-          .run(
-            prodotto.code,
-            JSON.stringify(prodotto),
-            new Date().toISOString(),
-          );
-      return prodotto;
+    if (codiceEsistente && prodotto.code !== codiceEsistente) throw new ErroreApplicazione("Il codice a barre non può essere modificato.");
+    const salva = async () => {
+      const esiste = await this.database.prodotti_personalizzati.get(prodotto.code);
+      if (codiceEsistente && !esiste) throw new ErroreApplicazione("Prodotto personalizzato non trovato.",404);
+      if (!codiceEsistente && esiste) throw new ErroreApplicazione("Esiste già un prodotto personalizzato con questo codice a barre.",409);
+      await this.database.prodotti_personalizzati.put({codice:prodotto.code,dati:prodotto,creato_il:esiste?.creato_il ?? new Date().toISOString()}); return prodotto;
     };
-    return codiceEsistente
-      ? salva()
-      : this.eseguiRipetibile(
-          chiave,
-          JSON.stringify({ azione: "creazione_prodotto", prodotto }),
-          salva,
-        );
+    return codiceEsistente ? this.database.transazione(salva) : this.eseguiRipetibile(chiave,JSON.stringify({azione:"creazione_prodotto",prodotto}),salva);
   }
-
-  eliminaProdotto(codice: string): void {
-    if (
-      !this.database.personale
-        .prepare("DELETE FROM prodotti_personalizzati WHERE codice=?")
-        .run(validaCodice(codice)).changes
-    )
-      throw new ErroreApplicazione("Prodotto personalizzato non trovato.", 404);
+  async eliminaProdotto(codice: string): Promise<void> {
+    await this.database.transazione(async () => {
+      if (!(await this.database.prodotti_personalizzati.get(validaCodice(codice)))) throw new ErroreApplicazione("Prodotto personalizzato non trovato.",404);
+      await this.database.prodotti_personalizzati.delete(codice);
+    });
   }
-
-  inventario(): VoceInventario[] {
-    return this.database.personale
-      .prepare(
-        "SELECT * FROM inventario ORDER BY scadenza IS NULL,scadenza,inserito_il DESC,id DESC",
-      )
-      .all()
-      .map(voceInventario);
+  async inventario(): Promise<VoceInventario[]> {
+    return (await this.database.inventario.toArray()).sort((a,b) => (a.scadenza ?? "9999").localeCompare(b.scadenza ?? "9999") || b.inserito_il.localeCompare(a.inserito_il) || b.id-a.id);
   }
-
-  voce(id: number): VoceInventario {
-    const riga = this.database.personale
-      .prepare("SELECT * FROM inventario WHERE id=?")
-      .get(id);
-    if (!riga)
-      throw new ErroreApplicazione(
-        "Prodotto dell'inventario non trovato.",
-        404,
-      );
-    return voceInventario(riga);
+  async voce(id: number): Promise<VoceInventario> {
+    const riga = await this.database.inventario.get(id); if (!riga) throw new ErroreApplicazione("Prodotto dell'inventario non trovato.",404); return riga;
   }
-
-  private datiInventario(
+  private async datiInventario(
     valore: unknown,
     attuale?: VoceInventario,
-  ): Pick<
+  ): Promise<Pick<
     VoceInventario,
     | "confezioni"
     | "quantita"
@@ -632,7 +425,7 @@ export class ArchivioFridgeBrain {
     | "posizione"
     | "scadenza"
     | "scorta_minima"
-  > {
+  >> {
     const dati = oggetto(valore);
     const confezioni = numero(
       dati.confezioni === undefined
@@ -665,7 +458,7 @@ export class ArchivioFridgeBrain {
       "Posizione",
       60,
     );
-    if (!this.posizioni().includes(posizione))
+    if (!(await this.posizioni()).includes(posizione))
       throw new ErroreApplicazione("La posizione selezionata non esiste.");
     const scadenza = validaScadenza(
       dati.scadenza === undefined ? (attuale?.scadenza ?? null) : dati.scadenza,
@@ -698,373 +491,95 @@ export class ArchivioFridgeBrain {
     };
   }
 
-  aggiungiInventario(valore: unknown, chiave?: string): VoceInventario {
-    const dati = oggetto(valore);
-    const codice = validaCodice(dati.codice);
-    const voce = this.datiInventario(dati);
-    return this.eseguiRipetibile(
-      chiave,
-      JSON.stringify({ azione: "aggiunta_inventario", codice, ...voce }),
-      () => {
-        const prodotto = this.prodotto(codice);
-        const risultato = this.database.personale
-          .prepare(
-            "INSERT INTO inventario(prodotto,confezioni,quantita,unita,posizione,scadenza,inserito_il,scorta_minima) VALUES (?,?,?,?,?,?,?,?)",
-          )
-          .run(
-            JSON.stringify(prodotto),
-            voce.confezioni,
-            voce.quantita,
-            voce.unita,
-            voce.posizione,
-            voce.scadenza,
-            new Date().toISOString(),
-            voce.scorta_minima ?? null,
-          );
-        return this.voce(Number(risultato.lastInsertRowid));
-      },
-    );
-  }
 
-  modificaInventario(id: number, valore: unknown): VoceInventario {
-    return this.database.transazione(() => {
-      const dati = this.datiInventario(valore, this.voce(id));
-      this.database.personale
-        .prepare(
-          "UPDATE inventario SET confezioni=?,quantita=?,unita=?,posizione=?,scadenza=?,scorta_minima=? WHERE id=?",
-        )
-        .run(
-          dati.confezioni,
-          dati.quantita,
-          dati.unita,
-          dati.posizione,
-          dati.scadenza,
-          dati.scorta_minima ?? null,
-          id,
-        );
+  async aggiungiInventario(valore: unknown, chiave?: string): Promise<VoceInventario> {
+    const dati = oggetto(valore); const codice = validaCodice(dati.codice);
+    const voce = await this.datiInventario(dati);
+    // La rete rimane sempre fuori dalle transazioni IndexedDB.
+    if (!(chiave && await this.database.operazioni.get(chiave))) await this.recuperaProdotto(codice);
+    return this.eseguiRipetibile(chiave, JSON.stringify({azione:"aggiunta_inventario",codice,...voce}), async () => {
+      const valori = await this.datiInventario(dati);
+      const prodotto = await this.prodotto(codice);
+      const id = await this.database.inventario.add({ ...valori, prodotto, inserito_il:new Date().toISOString() } as VoceInventario);
       return this.voce(id);
     });
   }
-
-  eliminaInventario(id: number): void {
-    this.database.transazione(() => {
-      const voce = this.voce(id);
-      this.database.personale
-        .prepare("DELETE FROM inventario WHERE id=?")
-        .run(id);
-      this.registra(
-        "eliminazione",
-        `${voce.prodotto.product_name}: eliminato dall'inventario.`,
-      );
+  async modificaInventario(id: number, valore: unknown): Promise<VoceInventario> {
+    return this.database.transazione(async () => { const attuale=await this.voce(id); const dati=await this.datiInventario(valore,attuale); await this.database.inventario.put({...attuale,...dati}); return this.voce(id); });
+  }
+  async eliminaInventario(id: number): Promise<void> {
+    await this.database.transazione(async () => { const voce=await this.voce(id); await this.database.inventario.delete(id); await this.registra("eliminazione",`${voce.prodotto.product_name}: eliminato dall'inventario.`); });
+  }
+  async consumaInventario(id: number, valore: unknown, chiave?: string): Promise<void> {
+    const dati=oggetto(valore); const quantita=dati.quantita===undefined?undefined:numero(dati.quantita,"Quantità da consumare",0.001);
+    await this.eseguiRipetibile(chiave,JSON.stringify({azione:"consumo",id,quantita:quantita??null}),async () => {
+      const voce=await this.voce(id);
+      if (quantita!==undefined) {
+        if (voce.quantita===null) throw new ErroreApplicazione("Registra prima la quantità residua per effettuare un consumo parziale.");
+        if (voce.unita==="pz" && !Number.isInteger(quantita)) throw new ErroreApplicazione("Inserisci un numero intero di pezzi.");
+        if (quantita>voce.quantita) throw new ErroreApplicazione("La quantità da consumare supera quella disponibile.",409);
+      }
+      const residua=quantita===undefined?0:Number((voce.quantita!-quantita).toFixed(6));
+      if (residua<=0) await this.database.inventario.delete(id); else await this.database.inventario.update(id,{quantita:residua});
+      await this.registra("consumo",`${voce.prodotto.product_name}: ${quantita===undefined?"consumato completamente":`consumati ${quantita} ${voce.unita}`}.`);
     });
   }
-
-  consumaInventario(id: number, valore: unknown, chiave?: string): void {
-    const dati = oggetto(valore);
-    const quantita =
-      dati.quantita === undefined
-        ? undefined
-        : numero(dati.quantita, "Quantità da consumare", 0.001);
-    if (chiave) testo(chiave, "Chiave dell'operazione", 100);
-    const firma = JSON.stringify({ id, quantita: quantita ?? null });
-    this.database.transazione(() => {
-      if (chiave) {
-        const precedente = this.database.personale
-          .prepare("SELECT firma FROM operazioni WHERE chiave=?")
-          .get(chiave);
-        if (precedente) {
-          if (precedente.firma !== firma)
-            throw new ErroreApplicazione(
-              "Questa operazione è già stata usata con dati diversi.",
-              409,
-            );
-          return;
-        }
-      }
-      const voce = this.voce(id);
-      if (quantita !== undefined) {
-        if (voce.quantita === null)
-          throw new ErroreApplicazione(
-            "Registra prima la quantità residua per effettuare un consumo parziale.",
-          );
-        if (voce.unita === "pz" && !Number.isInteger(quantita))
-          throw new ErroreApplicazione("Inserisci un numero intero di pezzi.");
-        if (quantita > voce.quantita)
-          throw new ErroreApplicazione(
-            "La quantità da consumare supera quella disponibile.",
-            409,
-          );
-      }
-      const residua =
-        quantita === undefined
-          ? 0
-          : Number((voce.quantita! - quantita).toFixed(6));
-      if (residua <= 0)
-        this.database.personale
-          .prepare("DELETE FROM inventario WHERE id=?")
-          .run(id);
-      else
-        this.database.personale
-          .prepare("UPDATE inventario SET quantita=? WHERE id=?")
-          .run(residua, id);
-      this.registra(
-        "consumo",
-        `${voce.prodotto.product_name}: ${quantita === undefined ? "consumato completamente" : `consumati ${quantita} ${voce.unita}`}.`,
-      );
-      if (chiave)
-        this.database.personale
-          .prepare(
-            "INSERT INTO operazioni(chiave,firma,creato_il) VALUES (?,?,?)",
-          )
-          .run(chiave, firma, new Date().toISOString());
+  async spesa(): Promise<VoceSpesa[]> { return (await this.database.spesa.toArray()).sort((a,b)=> Number(a.completato)-Number(b.completato) || b.inserito_il.localeCompare(a.inserito_il) || b.id-a.id); }
+  private async elementoSpesa(id: number): Promise<VoceSpesa> { const riga=await this.database.spesa.get(id); if (!riga) throw new ErroreApplicazione("Elemento della spesa non trovato.",404); return riga; }
+  async aggiungiSpesa(valore: unknown, chiave?: string): Promise<VoceSpesa> {
+    const dati=oggetto(valore); const nome=testo(dati.nome,"Nome"); const quantita=testo(dati.quantita??"","Quantità",100,true);
+    return this.eseguiRipetibile(chiave,JSON.stringify({azione:"aggiunta_spesa",nome,quantita}),async()=> {
+      const id=await this.database.spesa.add({nome,quantita,completato:false,inserito_il:new Date().toISOString()} as VoceSpesa); return this.elementoSpesa(id);
     });
   }
-
-  spesa(): VoceSpesa[] {
-    return this.database.personale
-      .prepare(
-        "SELECT * FROM spesa ORDER BY completato, inserito_il DESC, id DESC",
-      )
-      .all()
-      .map(voceSpesa);
+  async modificaSpesa(id:number,valore:unknown):Promise<VoceSpesa> {
+    const dati=oggetto(valore);
+    return this.database.transazione(async()=> {
+      const attuale=await this.elementoSpesa(id);
+      await this.database.spesa.put({...attuale,nome:dati.nome===undefined?attuale.nome:testo(dati.nome,"Nome"),quantita:dati.quantita===undefined?attuale.quantita:testo(dati.quantita,"Quantità",100,true),completato:dati.completato===undefined?attuale.completato:booleano(dati.completato,"Spunta")}); return this.elementoSpesa(id);
+    });
   }
-
-  private elementoSpesa(id: number): VoceSpesa {
-    const riga = this.database.personale
-      .prepare("SELECT * FROM spesa WHERE id=?")
-      .get(id);
-    if (!riga)
-      throw new ErroreApplicazione("Elemento della spesa non trovato.", 404);
-    return voceSpesa(riga);
-  }
-
-  aggiungiSpesa(valore: unknown, chiave?: string): VoceSpesa {
-    const dati = oggetto(valore);
-    const nome = testo(dati.nome, "Nome");
-    const quantita = testo(dati.quantita ?? "", "Quantità", 100, true);
-    return this.eseguiRipetibile(
-      chiave,
-      JSON.stringify({ azione: "aggiunta_spesa", nome, quantita }),
-      () => {
-        const risultato = this.database.personale
-          .prepare(
-            "INSERT INTO spesa(nome,quantita,inserito_il) VALUES (?,?,?)",
-          )
-          .run(nome, quantita, new Date().toISOString());
-        return this.elementoSpesa(Number(risultato.lastInsertRowid));
-      },
-    );
-  }
-
-  modificaSpesa(id: number, valore: unknown): VoceSpesa {
-    const dati = oggetto(valore);
-    const attuale = this.elementoSpesa(id);
-    const nome =
-      dati.nome === undefined ? attuale.nome : testo(dati.nome, "Nome");
-    const quantita =
-      dati.quantita === undefined
-        ? attuale.quantita
-        : testo(dati.quantita, "Quantità", 100, true);
-    const completato =
-      dati.completato === undefined
-        ? attuale.completato
-        : booleano(dati.completato, "Spunta");
-    this.database.personale
-      .prepare("UPDATE spesa SET nome=?,quantita=?,completato=? WHERE id=?")
-      .run(nome, quantita, Number(completato), id);
-    return this.elementoSpesa(id);
-  }
-
-  eliminaSpesa(id: number): void {
-    if (
-      !this.database.personale.prepare("DELETE FROM spesa WHERE id=?").run(id)
-        .changes
-    )
-      throw new ErroreApplicazione("Elemento della spesa non trovato.", 404);
-  }
-
-  preferenze(): Preferenze {
-    const riga = this.database.personale
-      .prepare("SELECT valore FROM impostazioni WHERE chiave='preferenze'")
-      .get();
-    return riga
-      ? JSON.parse(String(riga.valore))
-      : structuredClone(preferenzeIniziali);
-  }
-
-  salvaPreferenze(valore: unknown): Preferenze {
-    const preferenze = validaPreferenze(valore);
-    this.database.personale
-      .prepare(
-        "INSERT INTO impostazioni(chiave,valore) VALUES ('preferenze',?) ON CONFLICT(chiave) DO UPDATE SET valore=excluded.valore",
-      )
-      .run(JSON.stringify(preferenze));
-    return preferenze;
-  }
-
-  ricette(): Ricetta[] {
-    return this.database.personale
-      .prepare("SELECT * FROM ricette ORDER BY id DESC LIMIT 100")
-      .all()
-      .map(voceRicetta);
-  }
-
-  ricetta(id: number): Ricetta {
-    const riga = this.database.personale
-      .prepare("SELECT * FROM ricette WHERE id=?")
-      .get(id);
-    if (!riga) throw new ErroreApplicazione("Ricetta non trovata.", 404);
-    return voceRicetta(riga);
-  }
-
-  async generaRicetta(valore: unknown): Promise<Ricetta> {
-    const richiesta = applicaPreferenzeSalvate(
-      validaRichiesta(valore),
-      this.preferenze(),
-    );
-    if (generatoreConfigurato() === "disabilitato")
-      throw new ErroreApplicazione(
-        "Il generatore di ricette non è configurato. Consulta le impostazioni per collegare il modello locale.",
-        503,
-      );
+  async eliminaSpesa(id:number):Promise<void> { await this.database.transazione(async()=>{await this.elementoSpesa(id);await this.database.spesa.delete(id);}); }
+  async preferenze():Promise<Preferenze> { return (await this.database.impostazioni.get("preferenze"))?.valore ?? structuredClone(preferenzeIniziali); }
+  async salvaPreferenze(valore:unknown):Promise<Preferenze> { const preferenze=validaPreferenze(valore);await this.database.impostazioni.put({chiave:"preferenze",valore:preferenze});return preferenze; }
+  async ricette():Promise<Ricetta[]> { return (await this.database.ricette.orderBy("id").reverse().limit(100).toArray()).map((riga)=>({...riga.dati,id:riga.id!})); }
+  async ricetta(id:number):Promise<Ricetta> { const riga=await this.database.ricette.get(id);if (!riga) throw new ErroreApplicazione("Ricetta non trovata.",404);return {...riga.dati,id}; }
+  async generaRicetta(valore:unknown):Promise<Ricetta> {
+    const richiesta=applicaPreferenzeSalvate(validaRichiesta(valore),await this.preferenze());
+    if (!this.configurazione.generatore) throw new ErroreApplicazione("Il generatore di ricette è disabilitato nella versione GitHub Pages. Le ricette salvate e i calcoli nutrizionali restano disponibili.",503);
     try {
-      const proposta = await generaRicettaVerificata(
-        this.inventario(),
-        richiesta,
-      );
-      return this.database.transazione(() => {
-        const inventario = this.inventario();
-        const verificata = validaRicetta(proposta, inventario, richiesta);
-        validaRicetta(proposta, inventario, {
-          ...this.preferenze(),
-          persone: richiesta.persone,
-          tempo_massimo: richiesta.tempo_massimo,
-        });
-        const risultato = this.database.personale
-          .prepare(
-            "INSERT INTO ricette(dati,richiesta,creata_il) VALUES (?,?,?)",
-          )
-          .run(
-            JSON.stringify({ ...proposta, ...verificata }),
-            JSON.stringify(richiesta),
-            new Date().toISOString(),
-          );
-        return this.ricetta(Number(risultato.lastInsertRowid));
+      const proposta=await generaRicettaVerificata(await this.inventario(),richiesta,{generatore:this.configurazione.generatore});
+      return this.database.transazione(async()=> {
+        const inventario=await this.inventario(); const verificata=validaRicetta(proposta,inventario,richiesta);
+        validaRicetta(proposta,inventario,{...await this.preferenze(),persone:richiesta.persone,tempo_massimo:richiesta.tempo_massimo});
+        const dati={...proposta,...verificata,creata_il:new Date().toISOString(),preparata_il:null} as Ricetta;
+        const id=await this.database.ricette.add({dati,richiesta}); return this.ricetta(id);
       });
-    } catch (errore) {
-      if (errore instanceof ErroreApplicazione) throw errore;
-      throw new ErroreApplicazione(
-        errore instanceof Error
-          ? errore.message
-          : "Non è stato possibile generare una ricetta valida.",
-        422,
-      );
-    }
+    } catch (errore) { if (errore instanceof ErroreApplicazione) throw errore;throw new ErroreApplicazione(errore instanceof Error?errore.message:"Non è stato possibile generare una ricetta valida.",422); }
   }
-
-  preparaRicetta(id: number): void {
-    this.database.transazione(() => {
-      const riga = this.database.personale
-        .prepare("SELECT * FROM ricette WHERE id=?")
-        .get(id);
-      if (!riga) throw new ErroreApplicazione("Ricetta non trovata.", 404);
-      // Una ripetizione della conferma non può consumare gli ingredienti una seconda volta.
-      if (riga.preparata_il) return;
-      const ricetta = voceRicetta(riga);
-      const richiesta = JSON.parse(String(riga.richiesta)) as RichiestaRicetta;
-      const inventario = this.inventario();
-      try {
-        validaRicetta(ricetta, inventario, richiesta);
-        validaRicetta(ricetta, inventario, {
-          ...this.preferenze(),
-          persone: richiesta.persone,
-          tempo_massimo: richiesta.tempo_massimo,
-        });
-      } catch (errore) {
-        throw new ErroreApplicazione(
-          errore instanceof Error
-            ? errore.message
-            : "Gli ingredienti non sono più disponibili o compatibili.",
-          409,
-        );
+  async preparaRicetta(id:number):Promise<void> {
+    await this.database.transazione(async()=> {
+      const riga=await this.database.ricette.get(id);if (!riga) throw new ErroreApplicazione("Ricetta non trovata.",404);
+      if (riga.dati.preparata_il) return;
+      const ricetta=riga.dati;const richiesta=riga.richiesta;const inventario=await this.inventario();
+      try {validaRicetta(ricetta,inventario,richiesta);validaRicetta(ricetta,inventario,{...await this.preferenze(),persone:richiesta.persone,tempo_massimo:richiesta.tempo_massimo});}
+      catch(errore){throw new ErroreApplicazione(errore instanceof Error?errore.message:"Gli ingredienti non sono più disponibili o compatibili.",409);}
+      const consumi=new Map<number,number>();for(const ingrediente of ricetta.ingredienti) consumi.set(ingrediente.inventario_id,(consumi.get(ingrediente.inventario_id)??0)+ingrediente.quantita);
+      for(const [identificatore,quantita] of consumi){
+        const voce=inventario.find((elemento)=>elemento.id===identificatore);
+        if(!voce||voce.quantita===null||quantita>voce.quantita) throw new ErroreApplicazione("La quantità disponibile è cambiata. Genera una nuova ricetta.",409);
+        const residua=Number((voce.quantita-quantita).toFixed(6));
+        if(residua<=0) await this.database.inventario.delete(identificatore);else await this.database.inventario.update(identificatore,{quantita:residua});
+        await this.registra("consumo",`${voce.prodotto.product_name}: consumati ${quantita} ${voce.unita} per «${ricetta.titolo}».`);
       }
-      const consumi = new Map<number, number>();
-      for (const ingrediente of ricetta.ingredienti)
-        consumi.set(
-          ingrediente.inventario_id,
-          (consumi.get(ingrediente.inventario_id) ?? 0) + ingrediente.quantita,
-        );
-      for (const [identificatore, quantita] of consumi) {
-        const voce = inventario.find(
-          (elemento) => elemento.id === identificatore,
-        );
-        if (!voce || voce.quantita === null || quantita > voce.quantita)
-          throw new ErroreApplicazione(
-            "La quantità disponibile è cambiata. Genera una nuova ricetta.",
-            409,
-          );
-        const residua = Number((voce.quantita - quantita).toFixed(6));
-        if (residua <= 0)
-          this.database.personale
-            .prepare("DELETE FROM inventario WHERE id=?")
-            .run(identificatore);
-        else
-          this.database.personale
-            .prepare("UPDATE inventario SET quantita=? WHERE id=?")
-            .run(residua, identificatore);
-        this.registra(
-          "consumo",
-          `${voce.prodotto.product_name}: consumati ${quantita} ${voce.unita} per «${ricetta.titolo}».`,
-        );
-      }
-      this.database.personale
-        .prepare(
-          "UPDATE ricette SET preparata_il=? WHERE id=? AND preparata_il IS NULL",
-        )
-        .run(new Date().toISOString(), id);
-      this.registra(
-        "ricetta_preparata",
-        `Preparata «${ricetta.titolo}» per ${ricetta.porzioni} persone.`,
-      );
+      await this.database.ricette.put({...riga,dati:{...ricetta,preparata_il:new Date().toISOString()}});
+      await this.registra("ricetta_preparata",`Preparata «${ricetta.titolo}» per ${ricetta.porzioni} persone.`);
     });
   }
-
-  eliminaRicetta(id: number): void {
-    if (
-      !this.database.personale.prepare("DELETE FROM ricette WHERE id=?").run(id)
-        .changes
-    )
-      throw new ErroreApplicazione("Ricetta non trovata.", 404);
-  }
-
-  storico(): EventoStorico[] {
-    return this.database.personale
-      .prepare("SELECT * FROM storico ORDER BY id DESC LIMIT 200")
-      .all()
-      .map((riga) => ({
-        id: Number(riga.id),
-        azione: String(riga.azione),
-        descrizione: String(riga.descrizione),
-        creato_il: String(riga.creato_il),
-      }));
-  }
-
-  private registra(azione: string, descrizione: string): void {
-    this.database.personale
-      .prepare(
-        "INSERT INTO storico(azione,descrizione,creato_il) VALUES (?,?,?)",
-      )
-      .run(azione, descrizione, new Date().toISOString());
-  }
-
-  chiudi(): void {
-    this.database.chiudi();
-  }
+  async eliminaRicetta(id:number):Promise<void>{await this.database.transazione(async()=>{await this.ricetta(id);await this.database.ricette.delete(id);});}
+  async storico():Promise<EventoStorico[]>{return this.database.storico.orderBy("id").reverse().limit(200).toArray();}
+  private async registra(azione:string,descrizione:string):Promise<void>{await this.database.storico.add({azione,descrizione,creato_il:new Date().toISOString()} as EventoStorico);}
+  chiudi():void {this.database.chiudi();}
 }
-
-const contenitore = globalThis as typeof globalThis & {
-  archivioFridgeBrain?: ArchivioFridgeBrain;
-};
-export function archivioApplicazione(): ArchivioFridgeBrain {
-  return (contenitore.archivioFridgeBrain ??= new ArchivioFridgeBrain());
-}
+let archivio: ArchivioFridgeBrain | undefined;
+export function archivioApplicazione():ArchivioFridgeBrain {return archivio ??= new ArchivioFridgeBrain();}

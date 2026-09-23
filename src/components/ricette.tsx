@@ -263,10 +263,10 @@ export function Ricette({
         <div className="avviso">
           <ChefHat size={22} />
           <div>
-            <strong>Il generatore locale non è configurato.</strong>
+            <strong>La generazione di ricette è disabilitata.</strong>
             <p>
-              Collega un modello locale nelle impostazioni del server per creare
-              nuove ricette. Le ricette salvate restano consultabili.
+              In questa versione non vengono utilizzati servizi AI. Le ricette
+              salvate restano consultabili, con i loro calcoli nutrizionali.
             </p>
           </div>
         </div>

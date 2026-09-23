@@ -1,73 +1,27 @@
-/* Solo risorse statiche. API e pagine richiedono sempre il server autenticato. */
-const versione = "fridgebrain-v2-risorse";
-const iniziali = [
-  "/manifest.webmanifest",
-  "/icone/icona-192.png",
-  "/icone/icona-512.png",
-  "/icone/icona-maskable.png",
-];
+/* La versione e le risorse sono inserite dopo next build. Nessun dato personale in Cache Storage. */
+const versione = "__VERSIONE__";
+const risorse = "__RISORSE__";
+const archivio = `fridgebrain-pages-${versione}`;
+const base = new URL("./", self.location.href).pathname;
 self.addEventListener("install", (evento) => {
-  evento.waitUntil(
-    caches
-      .open(versione)
-      .then((archivio) => archivio.addAll(iniziali))
-      .then(() => self.skipWaiting()),
-  );
+  evento.waitUntil((async()=>{
+    const cache = await caches.open(archivio);
+    await cache.addAll(risorse);
+    if (!self.registration.active) await self.skipWaiting();
+  })());
 });
-self.addEventListener("activate", (evento) => {
-  // Elimina anche le copie personali create dalle precedenti versioni locali.
-  evento.waitUntil(
-    caches
-      .keys()
-      .then((chiavi) =>
-        Promise.all(
-          chiavi
-            .filter(
-              (chiave) =>
-                chiave.startsWith("fridgebrain-") && chiave !== versione,
-            )
-            .map((chiave) => caches.delete(chiave)),
-        ),
-      )
-      .then(() => self.clients.claim()),
-  );
+self.addEventListener("message", (evento)=>{ if(evento.data?.tipo==="ATTIVA") void self.skipWaiting(); });
+self.addEventListener("activate", (evento)=>{
+  evento.waitUntil((async()=>{
+    for(const chiave of await caches.keys()) if(chiave.startsWith("fridgebrain-") && chiave!==archivio)await caches.delete(chiave);
+    await self.clients.claim();
+  })());
 });
-self.addEventListener("fetch", (evento) => {
-  const richiesta = evento.request;
-  const indirizzo = new URL(richiesta.url);
-  if (richiesta.method !== "GET" || indirizzo.origin !== self.location.origin)
-    return;
-  if (richiesta.mode === "navigate") {
-    evento.respondWith(
-      fetch(richiesta).catch(
-        () =>
-          new Response(
-            '<!doctype html><html lang="it"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FridgeBrain · Connessione assente</title><body style="font-family:system-ui;background:#faf9f5;color:#263b32;padding:32px"><h1>Connessione assente</h1><p>Ricollegati al server per accedere ai tuoi dati.</p><a href="/">Riprova</a></body></html>',
-            {
-              status: 503,
-              headers: {
-                "Content-Type": "text/html; charset=utf-8",
-                "Cache-Control": "no-store",
-              },
-            },
-          ),
-      ),
-    );
-    return;
-  }
-  if (
-    indirizzo.pathname.startsWith("/_next/static/") ||
-    iniziali.includes(indirizzo.pathname)
-  ) {
-    evento.respondWith(
-      (async () => {
-        const archivio = await caches.open(versione);
-        const salvata = await archivio.match(richiesta);
-        if (salvata) return salvata;
-        const risposta = await fetch(richiesta);
-        if (risposta.ok) await archivio.put(richiesta, risposta.clone());
-        return risposta;
-      })(),
-    );
-  }
+self.addEventListener("fetch", (evento)=>{
+  const richiesta=evento.request;const url=new URL(richiesta.url);
+  if(richiesta.method!=="GET"||url.origin!==self.location.origin||!url.pathname.startsWith(base))return;
+  // Solo file noti della build: niente API, prodotti OFF o copie di IndexedDB.
+  const chiave=richiesta.mode==="navigate" && [base,`${base}index.html`].includes(url.pathname)?base:url.pathname;
+  if(!risorse.includes(chiave))return;
+  evento.respondWith((async()=>{const cache=await caches.open(archivio);return await cache.match(chiave) ?? fetch(richiesta);})());
 });

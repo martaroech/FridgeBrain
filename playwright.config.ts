@@ -7,12 +7,7 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    httpCredentials: {
-      username: "prova",
-      password: "password-solo-test-molto-lunga",
-      send: "always",
-    },
-    baseURL: "http://127.0.0.1:3100",
+    baseURL: "http://127.0.0.1:3100/FridgeBrain/",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     locale: "it-IT",
@@ -34,18 +29,10 @@ export default defineConfig({
     { name: "desktop", use: { viewport: { width: 1440, height: 1000 } } },
   ],
   webServer: {
-    command: "node scripts/avvia_test_browser.mjs",
-    url: "http://127.0.0.1:3100/api/salute",
+    command: "node scripts/anteprima.mjs",
+    url: "http://127.0.0.1:3100/FridgeBrain/",
     reuseExistingServer: false,
     timeout: 60000,
-    env: {
-      FRIDGEBRAIN_DATI: "data/test-browser",
-      FRIDGEBRAIN_UTENTE: "prova",
-      FRIDGEBRAIN_PASSWORD: "password-solo-test-molto-lunga",
-      FRIDGEBRAIN_OFF_URL: "http://127.0.0.1:3101",
-      FRIDGEBRAIN_GENERATORE: "simulato",
-      NEXT_TELEMETRY_DISABLED: "1",
-      TZ: "Europe/Rome",
-    },
+    env: { PORT: "3100", TZ: "Europe/Rome" },
   },
 });

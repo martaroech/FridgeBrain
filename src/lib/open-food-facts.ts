@@ -80,7 +80,7 @@ export function normalizzaProdottoOff(
   return prodotto;
 }
 
-/** Un solo tentativo limitato nel tempo; il chiamante riusa la cache SQLite. */
+/** Un solo tentativo limitato nel tempo; il chiamante riusa la cache IndexedDB. */
 export async function recuperaDaOff(
   codice: string,
   equivalenti: string[],
@@ -92,22 +92,20 @@ export async function recuperaDaOff(
     configurazione.attesaOffMs ?? 8000,
   );
   try {
-    const base =
-      configurazione.indirizzoOff ??
-      process.env.FRIDGEBRAIN_OFF_URL ??
-      "https://world.openfoodfacts.org";
+    const base = configurazione.indirizzoOff ?? "https://world.openfoodfacts.org";
     const indirizzo = new URL(`/api/v2/product/${codice}.json`, base);
     indirizzo.searchParams.set("fields", campi);
+    // Il browser controlla User-Agent: identifichiamo l'app tramite il parametro OFF.
+    indirizzo.searchParams.set("user_agent", "FridgeBrain/1.0 (https://martaroech.github.io/FridgeBrain/)");
     const risposta = await (configurazione.richiediOff ?? fetch)(indirizzo, {
       signal: controllo.signal,
       redirect: "error",
       headers: {
         Accept: "application/json",
-        "User-Agent":
-          process.env.FRIDGEBRAIN_OFF_USER_AGENT ??
-          `FridgeBrain/1.0 (${process.env.FRIDGEBRAIN_ORIGINI?.split(",")[0] || "http://localhost"})`,
+
       },
       cache: "no-store",
+      credentials: "omit",
     });
     if (risposta.status === 429)
       throw new ErroreOpenFoodFacts(

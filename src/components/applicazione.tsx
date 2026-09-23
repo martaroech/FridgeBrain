@@ -1,4 +1,6 @@
 "use client";
+import { percorsoApp } from "@/lib/percorsi";
+import { richiediPersistenza } from "@/lib/database";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -48,6 +50,7 @@ const navigazione = [
 ] as const;
 
 export function Applicazione() {
+  const [aggiornamento, impostaAggiornamento] = useState<ServiceWorkerRegistration | null>(null);
   const [pagina, impostaPagina] = useState<Pagina>("home");
   const [stato, impostaStato] = useState<StatoApplicazione | null>(null);
   const [errore, impostaErrore] = useState("");
@@ -78,27 +81,19 @@ export function Applicazione() {
     }
     leggiPagina();
     window.addEventListener("hashchange", leggiPagina);
-    // Al primo accesso la richiesta iniziale precede l'attivazione della PWA.
-    // Ripetendola quando il browser viene controllato, anche quella visita salva la copia.
-    function salvaPrimaCopia() {
-      void aggiorna().catch(() => {});
-    }
+    void richiediPersistenza();
+    window.addEventListener("focus", ricaricaDati);
+    function ricaricaDati() { void aggiorna().catch(() => {}); }
     if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
-      navigator.serviceWorker.addEventListener(
-        "controllerchange",
-        salvaPrimaCopia,
-        { once: true },
-      );
-      void navigator.serviceWorker
-        .register("/servizio-worker.js")
-        .catch(() => {});
+      void navigator.serviceWorker.register(percorsoApp("/servizio-worker.js"), {scope: percorsoApp(), updateViaCache: "none"}).then((registrazione) => {
+        if(registrazione.waiting) impostaAggiornamento(registrazione);
+        registrazione.addEventListener("updatefound",()=>{const nuovo=registrazione.installing;nuovo?.addEventListener("statechange",()=>{if(nuovo.state==="installed" && navigator.serviceWorker.controller)impostaAggiornamento(registrazione);});});
+        return registrazione.update();
+      }).catch(() => {});
     }
     return () => {
       window.removeEventListener("hashchange", leggiPagina);
-      navigator.serviceWorker?.removeEventListener(
-        "controllerchange",
-        salvaPrimaCopia,
-      );
+      window.removeEventListener("focus", ricaricaDati);
       clearTimeout(temporizzatore.current);
     };
   }, [aggiorna]);
@@ -118,6 +113,7 @@ export function Applicazione() {
   }
   return (
     <>
+      {aggiornamento && <div className="avviso" role="status">È disponibile un aggiornamento. <button className="pulsante secondario" onClick={()=>{navigator.serviceWorker.addEventListener("controllerchange",()=>window.location.reload(),{once:true});aggiornamento.waiting?.postMessage({tipo:"ATTIVA"});}}>Aggiorna app</button></div>}
       <a className="salta-contenuto" href="#contenuto">
         Vai al contenuto
       </a>
@@ -179,37 +175,11 @@ export function Applicazione() {
               }}
             >
               <RefreshCw size={18} />
-              Riprova connessione
+              Riapri archivio locale
             </button>
           </div>
         ) : (
           <>
-            {stato.copia_offline && (
-              <div className="avviso" role="status">
-                <ShieldCheck size={22} />
-                <div>
-                  <strong>Server non raggiungibile.</strong>
-                  <p>
-                    Stai consultando una copia
-                    {stato.aggiornato_il
-                      ? ` del ${new Date(stato.aggiornato_il).toLocaleString("it-IT")}`
-                      : " salvata"}
-                    . Le modifiche richiedono il collegamento al server.
-                  </p>
-                  <button
-                    className="pulsante testuale"
-                    onClick={() =>
-                      void aggiorna().catch((problema) =>
-                        notifica(problema.message),
-                      )
-                    }
-                  >
-                    <RefreshCw size={17} />
-                    Aggiorna connessione
-                  </button>
-                </div>
-              </div>
-            )}
             {pagina === "home" && (
               <PaginaHome
                 stato={stato}

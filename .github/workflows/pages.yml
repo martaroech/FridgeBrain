@@ -1,0 +1,68 @@
+name: Verifica e pubblicazione GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verifica:
+    name: Test e build statica
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Scarica il codice
+        uses: actions/checkout@v7
+      - name: Configura Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Installa pnpm
+        run: npm install --global pnpm@11.19.0
+      - name: Installa le dipendenze
+        run: pnpm install --frozen-lockfile
+      - name: Verifica i tipi
+        run: pnpm controlla
+      - name: Verifica la logica e IndexedDB
+        run: pnpm test
+      - name: Prepara GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+      - name: Genera out e prepara la PWA
+        run: pnpm build
+      - name: Installa Chromium per i test
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Verifica i flussi sui tre formati
+        run: pnpm test:e2e
+      - name: Carica solo il sito statico
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: out
+
+  pubblica:
+    name: Pubblica GitHub Pages
+    if: github.ref == 'refs/heads/main'
+    needs: verifica
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pubblicazione.outputs.page_url }}
+    steps:
+      - name: Pubblica il sito
+        id: pubblicazione
+        uses: actions/deploy-pages@v4

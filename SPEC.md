@@ -1,5 +1,7 @@
 # FridgeBrain — Specifica di progetto
 
+> **Aggiornamento definitivo — 22 settembre 2026.** FridgeBrain è una PWA interamente client-side pubblicata su GitHub Pages (`https://martaroech.github.io/FridgeBrain/`) con Next.js `output: "export"`. Tutti i dati personali, compresi inventario, personalizzati, cache OFF, posizioni, spesa, preferenze, ricette e storico, risiedono esclusivamente in IndexedDB nel browser. I barcode vengono cercati prima localmente, poi direttamente nelle API HTTPS pubbliche Open Food Facts. Non esistono backend, route API applicative, proxy, SQLite, cataloghi da dump, Docker, VPS, autenticazione server o servizi cloud aggiuntivi. Il generatore AI resta disabilitato; motore nutrizionale, regole e astrazione provider sono preservati. Offline sono utilizzabili i dati locali; nuovi barcode richiedono Internet. Dispositivi differenti non sono sincronizzati: backup e trasferimento avvengono con JSON versionato dalle Impostazioni, con validazione, riepilogo e conferma. Cancellare i dati del sito/browser può cancellare l'inventario. Questa nota prevale su ogni requisito architetturale incompatibile nelle sezioni storiche sottostanti. Restano valide lingua italiana, UI/UX, design system, scanner, accessibilità e logica deterministica. Istruzioni operative nel [README](README.md).
+
 ## 1. Obiettivo del progetto
 
 FridgeBrain è una web application PWA, mobile-first e offline-first, pensata per gestire gli alimenti presenti in casa e aiutare l'utente a decidere cosa mangiare sulla base di ciò che possiede realmente.

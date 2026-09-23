@@ -1,12 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { percorsoApp } from "@/lib/percorsi";
 
 export const metadata: Metadata = {
   title: "FridgeBrain · La tua cucina, con più cura",
   description:
     "Il tuo inventario alimentare, le scadenze e le ricette. Sempre con te.",
-  icons: { icon: "/marchio.svg", apple: "/icone/apple-touch-icon.png" },
-  manifest: "/manifest.webmanifest",
+  icons: { icon: percorsoApp("/marchio.svg"), apple: percorsoApp("/icone/apple-touch-icon.png") },
+  manifest: percorsoApp("/manifest.webmanifest"),
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

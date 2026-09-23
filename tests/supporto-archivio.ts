@@ -1,11 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import type { ConfigurazioneArchivio } from "../src/lib/database";
-import type { TestContext } from "node:test";
-import { ArchivioFridgeBrain } from "../src/lib/servizi";
-import type { Prodotto } from "../src/lib/tipi";
-
+import "fake-indexeddb/auto";
+import Dexie from "dexie";
+import { indexedDB, IDBKeyRange } from "fake-indexeddb";
+Dexie.dependencies.indexedDB = indexedDB;
+Dexie.dependencies.IDBKeyRange = IDBKeyRange;
+import {readFileSync} from "node:fs";
+import {resolve} from "node:path";
+import type {TestContext} from "node:test";
+import type {ConfigurazioneArchivio} from "../src/lib/database";
+import {ArchivioFridgeBrain} from "../src/lib/servizi";
+import {GeneratoreRicetteSimulato} from "../src/lib/motore";
+import type {Prodotto} from "../src/lib/tipi";
 export const prodottiSample = JSON.parse(
   readFileSync(resolve("tests/fixtures/prodotti_sample.json"), "utf8"),
 ) as Prodotto[];
@@ -27,22 +31,10 @@ export const prodottoProva: Prodotto = {
   },
 };
 
-export function preparaArchivio(
-  contesto: TestContext,
-  conCache = true,
-  configurazione: ConfigurazioneArchivio = {},
-) {
-  const cartella = mkdtempSync(join(tmpdir(), "fridgebrain-test-"));
-  const archivio = new ArchivioFridgeBrain({
-    percorsoDati: join(cartella, "personale"),
-    richiediOff: async () => Response.json({ status: 0 }),
-    ...configurazione,
-  });
-  if (conCache)
-    for (const prodotto of prodottiSample) archivio.salvaCacheOff(prodotto);
-  contesto.after(() => {
-    archivio.chiudi();
-    rmSync(cartella, { recursive: true, force: true });
-  });
-  return { archivio, cartella };
+export async function preparaArchivio(contesto:TestContext,conCache=true,configurazione:ConfigurazioneArchivio={}) {
+  const archivio=new ArchivioFridgeBrain({nomeDatabase:`fridgebrain-test-${crypto.randomUUID()}`,richiediOff:async()=>Response.json({status:0}),generatore:process.env.FRIDGEBRAIN_GENERATORE==="simulato"?new GeneratoreRicetteSimulato():undefined,...configurazione});
+  await archivio.database.open();
+  if(conCache)for(const prodotto of prodottiSample)await archivio.salvaCacheOff(prodotto);
+  contesto.after(async()=>{await archivio.database.delete();});
+  return {archivio};
 }

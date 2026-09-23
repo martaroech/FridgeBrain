@@ -20,7 +20,7 @@ import type {
   VoceInventario,
 } from "@/lib/tipi";
 
-let copiaOffline = false;
+import { eseguiOperazione } from "@/lib/api";
 
 export function chiaveOperazione(
   chiavi: Map<string, string>,
@@ -44,31 +44,14 @@ export async function chiamaApi<T>(
   corpo?: unknown,
   chiave?: string,
 ): Promise<T> {
-  if (metodo !== "GET" && copiaOffline)
-    throw new Error(
-      "Stai consultando una copia offline. Ricollega il server e aggiorna prima di modificare i dati.",
-    );
-  let risposta: Response;
-  try {
-    risposta = await fetch(percorso, {
-      method: metodo,
-      headers: {
-        "Content-Type": "application/json",
-        ...(chiave ? { "Idempotency-Key": chiave } : {}),
-      },
-      body: corpo === undefined ? undefined : JSON.stringify(corpo),
-      cache: "no-store",
-    });
-  } catch {
-    throw new Error(
-      "Il server non è raggiungibile. Controlla la connessione e riprova.",
-    );
+  try { return await eseguiOperazione(percorso, metodo, corpo, chiave) as T; }
+  catch (errore) {
+    if (errore && typeof errore === "object" && "name" in errore) {
+      if (errore.name === "QuotaExceededError") throw new Error("Spazio del browser esaurito. Esporta un backup e libera spazio prima di riprovare.");
+      if (["DatabaseClosedError", "MissingAPIError", "SecurityError", "OpenFailedError"].includes(String(errore.name))) throw new Error("Archivio locale non disponibile. Verifica che il browser consenta la memorizzazione dei dati del sito.");
+    }
+    throw errore;
   }
-  const dati = await risposta.json().catch(() => ({}));
-  if (!risposta.ok)
-    throw new Error(dati.errore || "L’operazione non è riuscita. Riprova.");
-  if (percorso === "/api/stato") copiaOffline = dati.copia_offline === true;
-  return dati as T;
 }
 
 export function oggi() {

@@ -1,9 +1,7 @@
-import {
-  test,
-  expect,
-  type APIRequestContext,
-  type Page,
-} from "@playwright/test";
+import {test,expect,tabella,type ArchivioProva} from "./supporto";
+import type {Page} from "@playwright/test";
+import {GeneratoreRicetteSimulato,generaRicettaVerificata} from "../../src/lib/motore";
+import type {RichiestaRicetta} from "../../src/lib/tipi";
 import { readFileSync } from "node:fs";
 import type { StatoApplicazione, Prodotto } from "../../src/lib/tipi";
 
@@ -36,7 +34,7 @@ async function verificaLarghezza(pagina: Page) {
     ),
   ).toBe(true);
 }
-async function cucinaDiProva(richiesta: APIRequestContext) {
+async function cucinaDiProva(richiesta: ArchivioProva) {
   const codice = "2099999999908";
   await richiesta.delete(`/api/prodotti/${codice}`);
   const prodotto = await richiesta.post("/api/prodotti", {
@@ -74,7 +72,7 @@ async function cucinaDiProva(richiesta: APIRequestContext) {
   return voce.json();
 }
 
-test.beforeEach(async ({ request: richiesta }) => {
+test.beforeEach(async ({ archivioLocale: richiesta }) => {
   const stato = (await (
     await richiesta.get("/api/stato")
   ).json()) as StatoApplicazione;
@@ -98,7 +96,7 @@ test("A e C: barcode reale, aggiunta in frigorifero e scadenza nella Home", asyn
 }, prova) => {
   const errori: string[] = [];
   pagina.on("pageerror", (errore) => errori.push(errore.message));
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   await expect(
     pagina.getByText("Il frigorifero è ancora vuoto."),
   ).toBeVisible();
@@ -158,11 +156,11 @@ test("A e C: barcode reale, aggiunta in frigorifero e scadenza nella Home", asyn
 
 test("B: prodotto sconosciuto, dati manuali, nuova scansione, modifica e consumo", async ({
   page: pagina,
-  request: richiesta,
+  archivioLocale: richiesta,
 }, prova) => {
   const codice = "2099999999915";
   await richiesta.delete(`/api/prodotti/${codice}`);
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   await vai(pagina, "Aggiungi");
   await pagina.getByLabel("Codice a barre", { exact: true }).fill(codice);
   await pagina
@@ -264,19 +262,15 @@ test("B: prodotto sconosciuto, dati manuali, nuova scansione, modifica e consumo
 
 test("D ed E: ricetta verificata, nutrienti reali e consumo confermato", async ({
   page: pagina,
-  request: richiesta,
+  archivioLocale: richiesta,
 }, prova) => {
   const voce = await cucinaDiProva(richiesta);
-  await pagina.goto("/");
-  await vai(pagina, "Ricette");
-  await pagina
-    .getByText("Limiti nutrizionali per porzione", { exact: true })
-    .click();
-  await pagina.getByLabel("Calorie: massimo per porzione").fill("200");
-  await pagina.getByLabel("Proteine: minimo per porzione").fill("5");
-  await pagina
-    .getByRole("button", { name: "Trova una ricetta", exact: true })
-    .click();
+  const richiestaRicetta={...preferenze,persone:2,tempo_massimo:30} as RichiestaRicetta;
+  const proposta=await generaRicettaVerificata([voce],richiestaRicetta,{generatore:new GeneratoreRicetteSimulato()});
+  await tabella(pagina,"ricette","put",{dati:{...proposta,creata_il:new Date().toISOString(),preparata_il:null},richiesta:richiestaRicetta});
+  await pagina.goto("/FridgeBrain/");
+  await vai(pagina,"Ricette");
+  await pagina.getByRole("button").filter({hasText:proposta.titolo}).click();
   await expect(
     pagina.getByRole("heading", { name: "Nutrienti per porzione" }),
   ).toBeVisible();
@@ -322,7 +316,7 @@ test("D ed E: ricetta verificata, nutrienti reali e consumo confermato", async (
 test("lista della spesa, preferenze persistenti e storico", async ({
   page: pagina,
 }, prova) => {
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   await vai(pagina, "Spesa");
   await pagina.getByLabel("Cosa manca?").fill("Pomodori");
   await pagina.getByLabel("Quantità", { exact: true }).fill("500 g");
@@ -383,7 +377,7 @@ test("scanner con permesso negato e inserimento manuale sempre disponibile", asy
         Promise.reject(new DOMException("Permesso negato", "NotAllowedError")),
     });
   });
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   await vai(pagina, "Aggiungi");
   await expect(
     pagina
@@ -400,23 +394,23 @@ test("scanner con permesso negato e inserimento manuale sempre disponibile", asy
   });
 });
 
-test("PWA installabile senza copie personali consultabili quando il server è irraggiungibile", async ({
+test("PWA installabile con inventario e spesa disponibili e modificabili offline", async ({
   page: pagina,
   context: contesto,
-  request: richiesta,
+  archivioLocale: richiesta,
 }) => {
   await cucinaDiProva(richiesta);
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   await pagina.evaluate(async () => {
     await navigator.serviceWorker.ready;
   });
   await expect(
     pagina.getByRole("button", { name: "Apri Ceci lessati", exact: true }),
   ).toBeVisible();
-  const manifest = await (await richiesta.get("/manifest.webmanifest")).json();
+  const manifest = await (await contesto.request.get("/FridgeBrain/manifest.webmanifest")).json();
   expect(manifest.display).toBe("standalone");
   expect(manifest.icons.length).toBeGreaterThanOrEqual(3);
-  expect((await richiesta.get(manifest.icons[0].src)).ok()).toBeTruthy();
+  expect((await contesto.request.get("/FridgeBrain/"+manifest.icons[0].src)).ok()).toBeTruthy();
   const diagnostica = await contesto.newCDPSession(pagina);
   const installabilita = await diagnostica.send("Page.getInstallabilityErrors");
   expect(installabilita.installabilityErrors).toEqual([]);
@@ -429,17 +423,16 @@ test("PWA installabile senza copie personali consultabili quando il server è ir
   await pagina.reload();
   await contesto.setOffline(true);
   await pagina.reload();
-  await expect(
-    pagina.getByRole("heading", { name: "Connessione assente" }),
-  ).toBeVisible();
-  await expect(
-    pagina.getByText("Ceci lessati", { exact: true }),
-  ).not.toBeVisible();
+  await expect(pagina.getByRole("button",{name:"Apri Ceci lessati",exact:true})).toBeVisible();
+  await vai(pagina,"Spesa");
+  await pagina.getByLabel("Cosa manca?").fill("Sale offline");
+  await pagina.getByRole("button",{name:"Aggiungi alla spesa"}).click();
+  await expect(pagina.getByRole("checkbox",{name:"Segna acquistato: Sale offline"})).toBeVisible();
+  await pagina.reload();
+  await expect(pagina.getByRole("checkbox",{name:"Segna acquistato: Sale offline"})).toBeVisible();
+  await vai(pagina,"Aggiungi");
+  await expect(pagina.getByLabel("Codice a barre",{exact:true})).toBeVisible();
   await contesto.setOffline(false);
-  await pagina.getByRole("link", { name: "Riprova" }).click();
-  await expect(
-    pagina.getByRole("button", { name: "Apri Ceci lessati", exact: true }),
-  ).toBeVisible();
 });
 
 test("fotocamera: decodifica EAN reale, evita doppie letture e riparte per un altro prodotto", async ({
@@ -525,9 +518,9 @@ test("fotocamera: decodifica EAN reale, evita doppie letture e riparte per un al
   }, barre);
   let ricerche = 0;
   pagina.on("request", (richiesta) => {
-    if (richiesta.url().includes("/api/prodotti?codice=")) ricerche++;
+    if (richiesta.url().includes("world.openfoodfacts.org/api/v2/product/")) ricerche++;
   });
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   await vai(pagina, "Aggiungi");
   await expect(
     pagina.getByRole("heading", { name: campione.product_name, exact: true }),
@@ -545,10 +538,10 @@ test("fotocamera: decodifica EAN reale, evita doppie letture e riparte per un al
   await expect(
     pagina.getByRole("heading", { name: campione.product_name, exact: true }),
   ).toBeVisible();
-  expect(ricerche).toBe(2);
+  expect(ricerche).toBe(1);
 });
 
-test("il browser comunica solo con FridgeBrain anche usando prodotti OFF", async ({
+test("consultare le schermate non contatta servizi esterni", async ({
   page: pagina,
   context: contesto,
 }) => {
@@ -561,7 +554,7 @@ test("il browser comunica solo con FridgeBrain anche usando prodotti OFF", async
     }
     return percorso.continue();
   });
-  await pagina.goto("/");
+  await pagina.goto("/FridgeBrain/");
   for (const nome of ["Inventario", "Spesa", "Ricette", "Aggiungi", "Home"]) {
     await vai(pagina, nome);
     await verificaLarghezza(pagina);

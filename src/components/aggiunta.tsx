@@ -589,7 +589,7 @@ export function Aggiunta({
             </div>
           )}
           <p className="nota nota-privata">
-            I prodotti già riconosciuti sono salvati sul tuo server. Per un
+            I prodotti già riconosciuti sono salvati in questo browser. Per un
             nuovo barcode consultiamo Open Food Facts.
           </p>
         </div>

@@ -1,288 +1,54 @@
-import {
-  ArchivioFridgeBrain,
-  ErroreApplicazione,
-  archivioApplicazione,
-} from "./servizi";
-
-import { verificaAccesso } from "./autenticazione";
-
-function risposta(dati: unknown, stato = 200): Response {
-  return Response.json(dati, {
-    status: stato,
-    headers: {
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
-}
+import { archivioApplicazione, ArchivioFridgeBrain, ErroreApplicazione } from "./servizi";
 
 function identifica(valore: string | undefined): number {
-  if (
-    !valore ||
-    !/^[1-9]\d*$/.test(valore) ||
-    !Number.isSafeInteger(Number(valore))
-  )
-    throw new ErroreApplicazione("Identificatore non valido.");
+  if (!valore || !/^[1-9]\d*$/.test(valore) || !Number.isSafeInteger(Number(valore))) throw new ErroreApplicazione("Identificatore non valido.");
   return Number(valore);
 }
 
-function verificaOrigine(richiesta: Request): void {
-  if (["GET", "HEAD", "OPTIONS"].includes(richiesta.method)) return;
-  const origine = richiesta.headers.get("origin");
-  const indirizzo = new URL(richiesta.url);
-  const origini = [
-    indirizzo.origin,
-    ...(process.env.FRIDGEBRAIN_ORIGINI ?? "")
-      .split(",")
-      .map((valore) => valore.trim())
-      .filter(Boolean),
-  ];
-  // Next può ricostruire l'URL con l'indirizzo di ascolto interno. Host conserva
-  // l'autorità richiesta dal browser; le intestazioni forwarded non sono fidate.
-  const host = richiesta.headers.get("host");
-  if (host) {
-    try {
-      const pubblico = new URL(`${indirizzo.protocol}//${host}`);
-      if (pubblico.host === host && !pubblico.username && !pubblico.password)
-        origini.push(pubblico.origin);
-    } catch {
-      /* Un Host malformato non aggiunge origini autorizzate. */
-    }
+/** Contratto locale compatibile con le schermate esistenti. Non effettua richieste HTTP. */
+export async function eseguiOperazione(percorso: string, metodo = "GET", corpo: unknown = {}, chiave?: string, archivio: ArchivioFridgeBrain = archivioApplicazione()): Promise<unknown> {
+  const indirizzo = new URL(percorso, "https://fridgebrain.invalid");
+  const segmenti = indirizzo.pathname.replace(/^\/api\//, "").split("/").filter(Boolean).map(decodeURIComponent);
+  const [risorsa, identificatore, azione] = segmenti;
+  if (segmenti.length > 3) throw new ErroreApplicazione("Indirizzo non trovato.",404);
+  if (risorsa === "stato" && !identificatore && metodo === "GET") return archivio.stato();
+  if (risorsa === "prodotti" && !azione) {
+    if (metodo === "GET" && !identificatore) return indirizzo.searchParams.has("codice") ? archivio.recuperaProdotto(indirizzo.searchParams.get("codice")) : archivio.cercaProdotti(indirizzo.searchParams.get("q") ?? "");
+    if (metodo === "POST" && !identificatore) return archivio.salvaProdotto(corpo, undefined, chiave);
+    if (metodo === "PATCH" && identificatore) return archivio.salvaProdotto(corpo,identificatore);
+    if (metodo === "DELETE" && identificatore) { await archivio.eliminaProdotto(identificatore); return {ok:true}; }
   }
-  if (
-    (origine && !origini.includes(origine)) ||
-    richiesta.headers.get("sec-fetch-site") === "cross-site"
-  )
-    throw new ErroreApplicazione(
-      "Richiesta rifiutata: apri FridgeBrain direttamente dal suo indirizzo.",
-      403,
-    );
-}
-
-async function leggiCorpo(richiesta: Request): Promise<unknown> {
-  const massimo = 128 * 1024;
-  if (Number(richiesta.headers.get("content-length") ?? 0) > massimo)
-    throw new ErroreApplicazione("I dati inviati sono troppo grandi.", 413);
-  if (!richiesta.body) return {};
-  if (
-    !/^application\/json(?:\s*;|$)/i.test(
-      richiesta.headers.get("content-type") ?? "",
-    )
-  )
-    throw new ErroreApplicazione("Invia i dati nel formato JSON.", 415);
-  const lettore = richiesta.body.getReader();
-  const decodificatore = new TextDecoder();
-  let dimensione = 0;
-  let contenuto = "";
-  try {
-    while (true) {
-      const parte = await lettore.read();
-      if (parte.done) break;
-      dimensione += parte.value.byteLength;
-      if (dimensione > massimo) {
-        await lettore.cancel();
-        throw new ErroreApplicazione("I dati inviati sono troppo grandi.", 413);
-      }
-      contenuto += decodificatore.decode(parte.value, { stream: true });
-    }
-    contenuto += decodificatore.decode();
-  } finally {
-    lettore.releaseLock();
+  if (risorsa === "inventario") {
+    if (!identificatore && metodo === "GET") return archivio.inventario();
+    if (!identificatore && metodo === "POST") return archivio.aggiungiInventario(corpo,chiave);
+    if (identificatore && !azione && metodo === "GET") return archivio.voce(identifica(identificatore));
+    if (identificatore && !azione && metodo === "PATCH") return archivio.modificaInventario(identifica(identificatore),corpo);
+    if (identificatore && !azione && metodo === "DELETE") { await archivio.eliminaInventario(identifica(identificatore)); return {ok:true}; }
+    if (identificatore && azione === "consuma" && metodo === "POST") { await archivio.consumaInventario(identifica(identificatore),corpo,chiave); return {ok:true}; }
   }
-  if (!contenuto.trim()) return {};
-  try {
-    return JSON.parse(contenuto);
-  } catch {
-    throw new ErroreApplicazione("Il contenuto JSON non è valido.");
+  if (risorsa === "spesa" && !azione) {
+    if (!identificatore && metodo === "GET") return archivio.spesa();
+    if (!identificatore && metodo === "POST") return archivio.aggiungiSpesa(corpo,chiave);
+    if (identificatore && metodo === "PATCH") return archivio.modificaSpesa(identifica(identificatore),corpo);
+    if (identificatore && metodo === "DELETE") { await archivio.eliminaSpesa(identifica(identificatore)); return {ok:true}; }
   }
-}
-
-export async function gestisciRichiesta(
-  richiesta: Request,
-  archivioFornito?: ArchivioFridgeBrain,
-): Promise<Response> {
-  try {
-    if (
-      new URL(richiesta.url).pathname === "/api/salute" &&
-      richiesta.method === "GET"
-    )
-      return risposta({ ok: true });
-    const rifiuto = verificaAccesso(richiesta);
-    if (rifiuto) return rifiuto;
-    verificaOrigine(richiesta);
-    const indirizzo = new URL(richiesta.url);
-    const segmenti = indirizzo.pathname
-      .replace(/^\/api\//, "")
-      .split("/")
-      .filter(Boolean)
-      .map(decodeURIComponent);
-    const [risorsa, identificatore, azione] = segmenti;
-    if (segmenti.length > 3)
-      throw new ErroreApplicazione("Indirizzo non trovato.", 404);
-    const metodo = richiesta.method;
-    const archivio = archivioFornito ?? archivioApplicazione();
-    if (risorsa === "stato" && segmenti.length === 1 && metodo === "GET")
-      return risposta(archivio.stato());
-    if (risorsa === "prodotti" && !azione) {
-      if (metodo === "GET" && !identificatore)
-        return risposta(
-          indirizzo.searchParams.has("codice")
-            ? await archivio.recuperaProdotto(
-                indirizzo.searchParams.get("codice"),
-              )
-            : archivio.cercaProdotti(indirizzo.searchParams.get("q") ?? ""),
-        );
-      if (metodo === "POST" && !identificatore)
-        return risposta(
-          archivio.salvaProdotto(
-            await leggiCorpo(richiesta),
-            undefined,
-            richiesta.headers.get("idempotency-key") ?? undefined,
-          ),
-          201,
-        );
-      if (metodo === "PATCH" && identificatore)
-        return risposta(
-          archivio.salvaProdotto(await leggiCorpo(richiesta), identificatore),
-        );
-      if (metodo === "DELETE" && identificatore) {
-        archivio.eliminaProdotto(identificatore);
-        return risposta({ ok: true });
-      }
-    }
-    if (risorsa === "inventario") {
-      if (!identificatore && metodo === "GET")
-        return risposta(archivio.inventario());
-      if (!identificatore && metodo === "POST") {
-        const dati = await leggiCorpo(richiesta);
-        const chiave = richiesta.headers.get("idempotency-key") ?? undefined;
-        // La ricevuta già registrata resta utilizzabile anche se la cache viene svuotata.
-        const registrata =
-          chiave &&
-          archivio.database.personale
-            .prepare("SELECT chiave FROM operazioni WHERE chiave=?")
-            .get(chiave);
-        if (!registrata && dati && typeof dati === "object" && "codice" in dati)
-          await archivio.recuperaProdotto(dati.codice);
-        return risposta(archivio.aggiungiInventario(dati, chiave), 201);
-      }
-      if (identificatore && !azione && metodo === "GET")
-        return risposta(archivio.voce(identifica(identificatore)));
-      if (identificatore && !azione && metodo === "PATCH")
-        return risposta(
-          archivio.modificaInventario(
-            identifica(identificatore),
-            await leggiCorpo(richiesta),
-          ),
-        );
-      if (identificatore && !azione && metodo === "DELETE") {
-        archivio.eliminaInventario(identifica(identificatore));
-        return risposta({ ok: true });
-      }
-      if (identificatore && azione === "consuma" && metodo === "POST") {
-        archivio.consumaInventario(
-          identifica(identificatore),
-          await leggiCorpo(richiesta),
-          richiesta.headers.get("idempotency-key") ?? undefined,
-        );
-        return risposta({ ok: true });
-      }
-    }
-    if (risorsa === "spesa" && !azione) {
-      if (!identificatore && metodo === "GET")
-        return risposta(archivio.spesa());
-      if (!identificatore && metodo === "POST")
-        return risposta(
-          archivio.aggiungiSpesa(
-            await leggiCorpo(richiesta),
-            richiesta.headers.get("idempotency-key") ?? undefined,
-          ),
-          201,
-        );
-      if (identificatore && metodo === "PATCH")
-        return risposta(
-          archivio.modificaSpesa(
-            identifica(identificatore),
-            await leggiCorpo(richiesta),
-          ),
-        );
-      if (identificatore && metodo === "DELETE") {
-        archivio.eliminaSpesa(identifica(identificatore));
-        return risposta({ ok: true });
-      }
-    }
-    if (risorsa === "preferenze" && !identificatore) {
-      if (metodo === "GET") return risposta(archivio.preferenze());
-      if (metodo === "PUT")
-        return risposta(archivio.salvaPreferenze(await leggiCorpo(richiesta)));
-    }
-    if (risorsa === "posizioni" && !azione) {
-      if (!identificatore && metodo === "GET")
-        return risposta(archivio.posizioni());
-      if (!identificatore && metodo === "POST")
-        return risposta(
-          archivio.aggiungiPosizione(await leggiCorpo(richiesta)),
-          201,
-        );
-      if (identificatore && metodo === "DELETE") {
-        archivio.eliminaPosizione(identificatore);
-        return risposta({ ok: true });
-      }
-    }
-    if (risorsa === "ricette") {
-      if (!identificatore && metodo === "GET")
-        return risposta(archivio.ricette());
-      if (!identificatore && metodo === "POST")
-        return risposta(
-          await archivio.generaRicetta(await leggiCorpo(richiesta)),
-          201,
-        );
-      if (identificatore && !azione && metodo === "GET")
-        return risposta(archivio.ricetta(identifica(identificatore)));
-      if (identificatore && !azione && metodo === "DELETE") {
-        archivio.eliminaRicetta(identifica(identificatore));
-        return risposta({ ok: true });
-      }
-      if (identificatore && azione === "prepara" && metodo === "POST") {
-        archivio.preparaRicetta(identifica(identificatore));
-        return risposta({ ok: true });
-      }
-    }
-    if (risorsa === "storico" && !identificatore && metodo === "GET")
-      return risposta(archivio.storico());
-    if (
-      ![
-        "salute",
-        "stato",
-        "prodotti",
-        "inventario",
-        "spesa",
-        "preferenze",
-        "posizioni",
-        "ricette",
-        "storico",
-      ].includes(risorsa)
-    )
-      throw new ErroreApplicazione("Indirizzo non trovato.", 404);
-    throw new ErroreApplicazione(
-      "Operazione non disponibile per questo indirizzo.",
-      405,
-    );
-  } catch (errore) {
-    if (errore instanceof ErroreApplicazione)
-      return risposta({ errore: errore.message }, errore.stato);
-    // I dettagli tecnici non includono dati personali e restano nel processo del server.
-    const codice =
-      errore && typeof errore === "object" && "code" in errore
-        ? String(errore.code)
-        : "non_disponibile";
-    console.error(`Errore interno FridgeBrain; codice diagnostico: ${codice}.`);
-    return risposta(
-      {
-        errore:
-          "Non è stato possibile completare l'operazione. Controlla che il database sia disponibile e riprova.",
-      },
-      500,
-    );
+  if (risorsa === "preferenze" && !identificatore) {
+    if (metodo === "GET") return archivio.preferenze();
+    if (metodo === "PUT") return archivio.salvaPreferenze(corpo);
   }
+  if (risorsa === "posizioni" && !azione) {
+    if (!identificatore && metodo === "GET") return archivio.posizioni();
+    if (!identificatore && metodo === "POST") return archivio.aggiungiPosizione(corpo);
+    if (identificatore && metodo === "DELETE") { await archivio.eliminaPosizione(identificatore);return {ok:true}; }
+  }
+  if (risorsa === "ricette") {
+    if (!identificatore && metodo === "GET") return archivio.ricette();
+    if (!identificatore && metodo === "POST") return archivio.generaRicetta(corpo);
+    if (identificatore && !azione && metodo === "GET") return archivio.ricetta(identifica(identificatore));
+    if (identificatore && !azione && metodo === "DELETE") { await archivio.eliminaRicetta(identifica(identificatore));return {ok:true}; }
+    if (identificatore && azione === "prepara" && metodo === "POST") { await archivio.preparaRicetta(identifica(identificatore));return {ok:true}; }
+  }
+  if (risorsa === "storico" && !identificatore && metodo === "GET") return archivio.storico();
+  if (!["stato","prodotti","inventario","spesa","preferenze","posizioni","ricette","storico"].includes(risorsa)) throw new ErroreApplicazione("Indirizzo non trovato.",404);
+  throw new ErroreApplicazione("Operazione non disponibile per questo indirizzo.",405);
 }

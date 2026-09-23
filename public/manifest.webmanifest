@@ -1,15 +1,42 @@
 {
-  "id": "/", "name": "FridgeBrain", "short_name": "FridgeBrain", "lang": "it",
+  "id": "./",
+  "name": "FridgeBrain",
+  "short_name": "FridgeBrain",
+  "lang": "it",
   "description": "La tua cucina, in ordine. Inventario, scadenze, ricette e spesa sempre con te.",
-  "start_url": "/", "scope": "/", "display": "standalone",
-  "background_color": "#f7f8f2", "theme_color": "#204d37",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f8f2",
+  "theme_color": "#204d37",
   "icons": [
-    { "src": "/icone/icona-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icone/icona-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icone/icona-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icone/icona-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icone/icona-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icone/icona-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "shortcuts": [
-    { "name": "Aggiungi prodotto", "url": "/#aggiungi" },
-    { "name": "Lista della spesa", "url": "/#spesa" }
+    {
+      "name": "Aggiungi prodotto",
+      "url": "./#aggiungi"
+    },
+    {
+      "name": "Lista della spesa",
+      "url": "./#spesa"
+    }
   ]
 }
