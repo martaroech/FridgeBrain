@@ -113,7 +113,7 @@ export function Applicazione() {
   }
   return (
     <>
-      {aggiornamento && <div className="avviso" role="status">È disponibile un aggiornamento. <button className="pulsante secondario" onClick={()=>{const waiting=aggiornamento.waiting;if(waiting){navigator.serviceWorker.addEventListener("controllerchange",()=>window.location.reload(),{once:true});waiting.postMessage({tipo:"ATTIVA"});}else{impostaAggiornamento(null);}}}>Aggiorna app</button></div>}
+      {aggiornamento && <div className="avviso" role="status">È disponibile un aggiornamento. <button className="pulsante secondario" onClick={()=>{const waiting=aggiornamento.waiting;if(waiting){navigator.serviceWorker.addEventListener("controllerchange",()=>window.location.reload(),{once:true});waiting.postMessage({tipo:"ATTIVA"});}else{void navigator.serviceWorker.getRegistration().then(registrazione=>{if(registrazione?.waiting){navigator.serviceWorker.addEventListener("controllerchange",()=>window.location.reload(),{once:true});registrazione.waiting.postMessage({tipo:"ATTIVA"});}else{window.location.reload();}});}}}>Aggiorna app</button></div>}
       <a className="salta-contenuto" href="#contenuto">
         Vai al contenuto
       </a>
