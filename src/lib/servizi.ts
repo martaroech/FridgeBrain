@@ -332,6 +332,19 @@ export class ArchivioFridgeBrain {
   private riprendiOffDal = 0;
   constructor(private readonly configurazione: ConfigurazioneArchivio = {}) { this.database = new DatabaseFridgeBrain(configurazione); }
 
+  private async rimuoviVoceSpesaAutomatica(voce: VoceInventario): Promise<void> {
+    const vociSpesa = await this.database.spesa.toArray();
+    const voceTrovata = vociSpesa.find((spesa) => 
+      èVoceSpesaAutomatica(spesa) && 
+      spesa.nome.replace(MARCATORE_SCORTA, "").trim() === 
+      voce.prodotto.product_name + (voce.prodotto.brands ? ` (${voce.prodotto.brands})` : "")
+    );
+    
+    if (voceTrovata) {
+      await this.database.spesa.delete(voceTrovata.id);
+    }
+  }
+
   private async aggiornaSpesaAutomatica(voce: VoceInventario): Promise<void> {
     if (voce.scorta_minima === null || voce.scorta_minima === undefined) return;
     if (voce.quantita === null) return;
@@ -572,10 +585,7 @@ export class ArchivioFridgeBrain {
     await this.database.transazione(async () => { 
       const voce=await this.voce(id); 
       await this.database.inventario.delete(id); 
-      if (voce.scorta_minima !== null && voce.scorta_minima !== undefined) {
-        const voceSimulata = { ...voce, quantita: 0 };
-        await this.aggiornaSpesaAutomatica(voceSimulata);
-      }
+      await this.rimuoviVoceSpesaAutomatica(voce);
       await this.registra("eliminazione",`${voce.prodotto.product_name}: eliminato dall'inventario.`); 
     });
   }

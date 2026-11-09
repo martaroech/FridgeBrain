@@ -460,7 +460,7 @@ test("preparazione ricetta aggiorna automaticamente spesa per ingredienti sotto 
     assert.equal(spesa.length, 1);
     assert.ok(spesa[0].nome.includes("→ scorta"));
 });
-test("eliminazione prodotto con scorta minima aggiunge alla spesa", async (contesto) => {
+test("eliminazione prodotto con scorta minima non aggiunge alla spesa", async (contesto) => {
     const { archivio } = await preparaArchivio(contesto, false);
     await archivio.salvaProdotto(prodottoProva);
     const voce = await archivio.aggiungiInventario({
@@ -471,6 +471,40 @@ test("eliminazione prodotto con scorta minima aggiunge alla spesa", async (conte
     });
     assert.equal((await archivio.spesa()).length, 0);
     await archivio.eliminaInventario(voce.id);
+    assert.equal((await archivio.spesa()).length, 0);
+});
+test("eliminazione prodotto rimuove voce automatica esistente ma lascia voci manuali", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    await archivio.aggiungiSpesa({ nome: "Pomodori", quantita: "500 g" });
+    await archivio.aggiungiSpesa({ nome: prodottoProva.product_name, quantita: "1 kg" });
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 80,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    let spesa = await archivio.spesa();
+    assert.equal(spesa.length, 3);
+    assert.equal(spesa.filter(v => v.nome.includes("→ scorta")).length, 1);
+    await archivio.eliminaInventario(voce.id);
+    spesa = await archivio.spesa();
+    assert.equal(spesa.length, 2);
+    assert.equal(spesa.filter(v => v.nome.includes("→ scorta")).length, 0);
+    assert.ok(spesa.some(v => v.nome === "Pomodori"));
+    assert.ok(spesa.some(v => v.nome === prodottoProva.product_name));
+});
+test("consumo completo con scorta minima aggiunge alla spesa", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 100,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    assert.equal((await archivio.spesa()).length, 1);
+    await archivio.consumaInventario(voce.id, {});
     const spesa = await archivio.spesa();
     assert.equal(spesa.length, 1);
     assert.ok(spesa[0].nome.includes("→ scorta"));
