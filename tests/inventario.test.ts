@@ -353,3 +353,145 @@ test("IndexedDB conserva inventario e scorte dopo chiusura e riapertura", async 
         riaperto.chiudi();
     }
 });
+test("prodotto sotto scorta minima aggiunge automaticamente voce alla lista della spesa", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 500,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    assert.equal((await archivio.spesa()).length, 0);
+    await archivio.consumaInventario(voce.id, { quantita: 400 });
+    const spesa = await archivio.spesa();
+    assert.equal(spesa.length, 1);
+    assert.ok(spesa[0].nome.includes("→ scorta"));
+    assert.ok(spesa[0].nome.includes(prodottoProva.product_name));
+    assert.equal(spesa[0].quantita, "100 g");
+    assert.equal(spesa[0].completato, false);
+});
+test("prodotto senza scorta minima non aggiunge automaticamente alla spesa", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 500,
+        unita: "g",
+    });
+    await archivio.consumaInventario(voce.id, { quantita: 499 });
+    assert.equal((await archivio.spesa()).length, 0);
+});
+test("rifornimento sopra scorta minima spunta la voce automatica nella spesa", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 80,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    let spesa = await archivio.spesa();
+    assert.equal(spesa.length, 1);
+    assert.equal(spesa[0].completato, false);
+    await archivio.modificaInventario(voce.id, { quantita: 150 });
+    spesa = await archivio.spesa();
+    assert.equal(spesa.length, 1);
+    assert.equal(spesa[0].completato, true);
+});
+test("non crea duplicati se la voce automatica esiste già nella spesa", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 80,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    assert.equal((await archivio.spesa()).length, 1);
+    await archivio.consumaInventario(voce.id, { quantita: 10 });
+    assert.equal((await archivio.spesa()).length, 1);
+    await archivio.modificaInventario(voce.id, { quantita: 50 });
+    assert.equal((await archivio.spesa()).length, 1);
+});
+test("voce automatica spuntata viene riattivata se scorta scende di nuovo", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 80,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    let spesa = await archivio.spesa();
+    assert.equal(spesa[0].completato, false);
+    await archivio.modificaInventario(voce.id, { quantita: 200 });
+    spesa = await archivio.spesa();
+    assert.equal(spesa[0].completato, true);
+    await archivio.consumaInventario(voce.id, { quantita: 150 });
+    spesa = await archivio.spesa();
+    assert.equal(spesa[0].completato, false);
+});
+test("preparazione ricetta aggiorna automaticamente spesa per ingredienti sotto scorta", async (contesto) => {
+    const precedente = process.env.FRIDGEBRAIN_GENERATORE;
+    process.env.FRIDGEBRAIN_GENERATORE = "simulato";
+    contesto.after(() => {
+        if (precedente === undefined) delete process.env.FRIDGEBRAIN_GENERATORE;
+        else process.env.FRIDGEBRAIN_GENERATORE = precedente;
+    });
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 250,
+        unita: "g",
+        scadenza: "2100-01-01",
+        scorta_minima: 100,
+    });
+    assert.equal((await archivio.spesa()).length, 0);
+    const ricetta = await archivio.generaRicetta({
+        ...preferenzeIniziali,
+        persone: 2,
+        tempo_massimo: 30,
+    });
+    await archivio.preparaRicetta(ricetta.id);
+    assert.equal((await archivio.voce(voce.id)).quantita, 50);
+    const spesa = await archivio.spesa();
+    assert.equal(spesa.length, 1);
+    assert.ok(spesa[0].nome.includes("→ scorta"));
+});
+test("eliminazione prodotto con scorta minima aggiunge alla spesa", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 200,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    assert.equal((await archivio.spesa()).length, 0);
+    await archivio.eliminaInventario(voce.id);
+    const spesa = await archivio.spesa();
+    assert.equal(spesa.length, 1);
+    assert.ok(spesa[0].nome.includes("→ scorta"));
+    assert.equal(spesa[0].completato, false);
+});
+test("voci spesa manuali non sono influenzate dall'aggiornamento automatico", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    await archivio.aggiungiSpesa({ nome: "Ceci", quantita: "500 g" });
+    await archivio.aggiungiSpesa({ nome: prodottoProva.product_name, quantita: "1 kg" });
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 80,
+        unita: "g",
+        scorta_minima: 100,
+    });
+    const spesa = await archivio.spesa();
+    assert.equal(spesa.length, 3);
+    const manuali = spesa.filter(v => !v.nome.includes("→ scorta"));
+    assert.equal(manuali.length, 2);
+    await archivio.modificaInventario(voce.id, { quantita: 200 });
+    const spesaAggiornata = await archivio.spesa();
+    assert.equal(spesaAggiornata.filter(v => !v.nome.includes("→ scorta")).length, 2);
+});
