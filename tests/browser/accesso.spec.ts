@@ -61,8 +61,8 @@ test("nuovo deployment aggiorna il service worker senza perdere i dati IndexedDB
     await writeFile(file,precedente.replace(/const versione = "[^"]+"/,`const versione = "${versione}"`));
     await pagina.evaluate(async()=>{const registrazione=await navigator.serviceWorker.getRegistration();await registrazione!.update();});
     await expect(pagina.getByRole("button",{name:"Aggiorna app"})).toBeVisible();
-    await pagina.getByRole("button",{name:"Aggiorna app"}).click();
-    await expect(pagina.getByRole("button",{name:"Aggiorna app"})).not.toBeVisible();
+    await expect.poll(()=>pagina.evaluate(async()=>{const registrazione=await navigator.serviceWorker.getRegistration();return registrazione?.waiting!==null;}),{timeout:5000}).toBe(true);
+    await Promise.all([pagina.waitForLoadState("load"),pagina.getByRole("button",{name:"Aggiorna app"}).click()]);
     await pagina.getByRole("navigation").getByRole("button",{name:"Inventario",exact:true}).click();
     await expect(pagina.getByRole("button",{name:"Apri Conservato dopo aggiornamento",exact:true})).toBeVisible();
     await expect.poll(()=>pagina.evaluate(()=>caches.keys())).toEqual([`fridgebrain-pages-${versione}`]);
