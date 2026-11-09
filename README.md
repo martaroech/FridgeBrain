@@ -78,8 +78,8 @@ La cache non scade automaticamente: una nuova scansione dello stesso prodotto no
 
 1. Apri **Aggiungi**, scansiona o inserisci il barcode. Puoi inserire manualmente prodotti sconosciuti anche offline.
 2. Controlla nome, ingredienti, nutrienti e allergeni; indica posizione, confezioni e scadenza. La **quantità totale residua** comprende tutte le confezioni e non viene moltiplicata automaticamente.
-3. In **Inventario** cerca, filtra e ordina; apri un prodotto per modificarlo, spostarlo, consumarlo o eliminarlo. **Scorta minima** è una soglia esplicita nella stessa unità del residuo.
-4. La **Home** evidenzia prodotti da consumare prima, scaduti e in esaurimento. In **Spesa** annota ciò che manca e spunta gli acquisti.
+3. In **Inventario** cerca, filtra e ordina; apri un prodotto per modificarlo, spostarlo, consumarlo o eliminarlo. **Scorta minima** è una soglia esplicita nella stessa unità del residuo: quando la quantità scende a quel livello o sotto, il prodotto viene aggiunto automaticamente alla lista della spesa.
+4. La **Home** evidenzia prodotti da consumare prima, scaduti e in esaurimento. In **Spesa** annota ciò che manca e spunta gli acquisti. I prodotti aggiunti automaticamente dalla scorta minima sono contrassegnati con **→ scorta** e vengono spuntati quando rifornisci l'inventario.
 5. In **Impostazioni** salva preferenze, allergeni ed esclusioni, gestisci posizioni, consulta lo storico e scarica regolarmente un backup.
 
 ## Nutrizione e ricette
