@@ -1,4 +1,4 @@
-export type Unita = "g" | "ml" | "pz";
+export type Unita = "g" | "ml" | "pz" | "bt";
 export type Nutriente =
   | "calorie"
   | "carboidrati"

@@ -84,7 +84,7 @@ La cache non scade automaticamente: una nuova scansione dello stesso prodotto no
 
 ## Nutrizione e ricette
 
-Il motore deterministico è conservato: calorie, carboidrati, zuccheri, proteine, grassi, fibre e sale per ingrediente, ricetta e porzione, dai dati per 100 g/ml. Valori mancanti rimangono sconosciuti; zero esplicito resta zero. Nessuna conversione arbitraria fra grammi, millilitri e pezzi. Quantità, scadenze, allergeni, dieta e limiti numerici sono verificati prima dell'accettazione e del consumo di una ricetta.
+Il motore deterministico è conservato: calorie, carboidrati, zuccheri, proteine, grassi, fibre e sale per ingrediente, ricetta e porzione, dai dati per 100 g/ml. Valori mancanti rimangono sconosciuti; zero esplicito resta zero. Nessuna conversione arbitraria fra grammi, millilitri, pezzi e bottiglie. Quantità, scadenze, allergeni, dieta e limiti numerici sono verificati prima dell'accettazione e del consumo di una ricetta.
 
 **Il generatore AI è disabilitato nella build Pages.** Non occorre Ollama e non vengono chiamate API AI. L'astrazione provider locale/simulato e la validazione restano nel codice e nei test per sviluppi futuri. Le ricette salvate e trasferite tramite backup sono consultabili e possono essere segnate come preparate: quantità e preferenze correnti vengono rivalidate, senza doppio consumo.
 

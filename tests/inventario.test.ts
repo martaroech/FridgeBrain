@@ -80,6 +80,7 @@ test("date impossibili, quantità negative, infinite e unità sconosciute vengon
     assert.equal(validaScadenza("2028-02-29"), "2028-02-29");
     await assert.rejects(async () => (await archivio.aggiungiInventario({ codice, posizione: "Sconosciuta" })), /posizione/);
     await assert.rejects(async () => (await archivio.aggiungiInventario({ codice, unita: "kg" })), /unità/);
+    await assert.rejects(async () => (await archivio.aggiungiInventario({ codice, unita: "bt", quantita: 1.5 })), /Quantità/);
     await assert.rejects(async () => (await archivio.aggiungiInventario({ codice, unita: "pz", quantita: 1.5 })), /Quantità/);
     assert.equal((await archivio.inventario()).length, 0);
 });
@@ -528,4 +529,25 @@ test("voci spesa manuali non sono influenzate dall'aggiornamento automatico", as
     await archivio.modificaInventario(voce.id, { quantita: 200 });
     const spesaAggiornata = await archivio.spesa();
     assert.equal(spesaAggiornata.filter(v => !v.nome.includes("→ scorta")).length, 2);
+});
+test("bottiglie funzionano come pezzi: valori interi e scorta minima", async (contesto) => {
+    const { archivio } = await preparaArchivio(contesto, false);
+    await archivio.salvaProdotto(prodottoProva);
+    const voce = await archivio.aggiungiInventario({
+        codice: prodottoProva.code,
+        quantita: 12,
+        unita: "bt",
+        scorta_minima: 3,
+    });
+    assert.equal(voce.unita, "bt");
+    assert.equal(voce.quantita, 12);
+    assert.equal(voce.scorta_minima, 3);
+    await assert.rejects(async () => await archivio.modificaInventario(voce.id, { quantita: 5.5 }), /intero/);
+    await assert.rejects(async () => await archivio.modificaInventario(voce.id, { scorta_minima: 2.5 }), /Scorta minima/);
+    await assert.rejects(async () => await archivio.consumaInventario(voce.id, { quantita: 1.5 }), /intero.*bottiglie/);
+    await archivio.consumaInventario(voce.id, { quantita: 10 });
+    assert.equal((await archivio.voce(voce.id)).quantita, 2);
+    const spesa = await archivio.spesa();
+    assert.equal(spesa.length, 1);
+    assert.ok(spesa[0].nome.includes("→ scorta"));
 });

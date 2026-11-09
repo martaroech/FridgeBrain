@@ -144,8 +144,8 @@ export function validaScadenza(valore: unknown): string | null {
 }
 
 function unita(valore: unknown): Unita {
-  if (valore !== "g" && valore !== "ml" && valore !== "pz")
-    throw new ErroreApplicazione("L'unità deve essere g, ml oppure pz.");
+  if (valore !== "g" && valore !== "ml" && valore !== "pz" && valore !== "bt")
+    throw new ErroreApplicazione("L'unità deve essere g, ml, pz oppure bt.");
   return valore;
 }
 
@@ -514,7 +514,7 @@ export class ArchivioFridgeBrain {
             "Quantità residua",
             0.001,
             1_000_000,
-            misura === "pz",
+            misura === "pz" || misura === "bt",
           );
     const posizione = testo(
       dati.posizione === undefined
@@ -540,7 +540,7 @@ export class ArchivioFridgeBrain {
             "Scorta minima",
             0.001,
             1_000_000,
-            misura === "pz",
+            misura === "pz" || misura === "bt",
           );
     if (scorta_minima !== null && quantita === null)
       throw new ErroreApplicazione(
@@ -595,7 +595,7 @@ export class ArchivioFridgeBrain {
       const voce=await this.voce(id);
       if (quantita!==undefined) {
         if (voce.quantita===null) throw new ErroreApplicazione("Registra prima la quantità residua per effettuare un consumo parziale.");
-        if (voce.unita==="pz" && !Number.isInteger(quantita)) throw new ErroreApplicazione("Inserisci un numero intero di pezzi.");
+        if ((voce.unita==="pz" || voce.unita==="bt") && !Number.isInteger(quantita)) throw new ErroreApplicazione(voce.unita==="pz" ? "Inserisci un numero intero di pezzi." : "Inserisci un numero intero di bottiglie.");
         if (quantita>voce.quantita) throw new ErroreApplicazione("La quantità da consumare supera quella disponibile.",409);
       }
       const residua=quantita===undefined?0:Number((voce.quantita!-quantita).toFixed(6));

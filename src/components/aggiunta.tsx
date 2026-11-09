@@ -214,6 +214,7 @@ export function CampiInventario({
             <option value="g">g</option>
             <option value="ml">ml</option>
             <option value="pz">pezzi</option>
+            <option value="bt">bottiglie</option>
           </select>
         </label>
       </div>
