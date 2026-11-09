@@ -14,6 +14,7 @@ import {
   generaRicettaVerificata,
   preferenzeIniziali,
   validaRicetta,
+  scortaInEsaurimento,
 } from "./motore";
 
 import { recuperaDaOff, ErroreOpenFoodFacts } from "./open-food-facts";
@@ -143,8 +144,8 @@ export function validaScadenza(valore: unknown): string | null {
 }
 
 function unita(valore: unknown): Unita {
-  if (valore !== "g" && valore !== "ml" && valore !== "pz")
-    throw new ErroreApplicazione("L'unità deve essere g, ml oppure pz.");
+  if (valore !== "g" && valore !== "ml" && valore !== "pz" && valore !== "bt")
+    throw new ErroreApplicazione("L'unità deve essere g, ml, pz oppure bt.");
   return valore;
 }
 
@@ -310,11 +311,75 @@ export function validaProdotto(valore: unknown): Prodotto {
 
 export function generatoreConfigurato(): StatoApplicazione["generatore"] { return "disabilitato"; }
 
+const MARCATORE_SCORTA = "→ scorta";
+
+function nomeVoceSpesaDaInventario(voce: VoceInventario): string {
+  return `${voce.prodotto.product_name}${voce.prodotto.brands ? ` (${voce.prodotto.brands})` : ""} ${MARCATORE_SCORTA}`;
+}
+
+function quantitaVoceSpesaDaInventario(voce: VoceInventario): string {
+  const scorta = voce.scorta_minima ?? 0;
+  return scorta > 0 ? `${scorta} ${voce.unita}` : "";
+}
+
+function èVoceSpesaAutomatica(voceSpesa: VoceSpesa): boolean {
+  return voceSpesa.nome.includes(MARCATORE_SCORTA);
+}
+
 export class ArchivioFridgeBrain {
   readonly database: DatabaseFridgeBrain;
   private richiesteOff = new Map<string, Promise<Prodotto>>();
   private riprendiOffDal = 0;
   constructor(private readonly configurazione: ConfigurazioneArchivio = {}) { this.database = new DatabaseFridgeBrain(configurazione); }
+
+  private async rimuoviVoceSpesaAutomatica(voce: VoceInventario): Promise<void> {
+    const vociSpesa = await this.database.spesa.toArray();
+    const voceTrovata = vociSpesa.find((spesa) => 
+      èVoceSpesaAutomatica(spesa) && 
+      spesa.nome.replace(MARCATORE_SCORTA, "").trim() === 
+      voce.prodotto.product_name + (voce.prodotto.brands ? ` (${voce.prodotto.brands})` : "")
+    );
+    
+    if (voceTrovata) {
+      await this.database.spesa.delete(voceTrovata.id);
+    }
+  }
+
+  private async aggiornaSpesaAutomatica(voce: VoceInventario): Promise<void> {
+    if (voce.scorta_minima === null || voce.scorta_minima === undefined) return;
+    if (voce.quantita === null) return;
+
+    const sottaScorta = scortaInEsaurimento(voce);
+    const nomeAtteso = nomeVoceSpesaDaInventario(voce);
+    const quantitaAttesa = quantitaVoceSpesaDaInventario(voce);
+
+    const vociSpesa = await this.database.spesa.toArray();
+    const voceTrovata = vociSpesa.find((spesa) => 
+      èVoceSpesaAutomatica(spesa) && 
+      spesa.nome.replace(MARCATORE_SCORTA, "").trim() === 
+      voce.prodotto.product_name + (voce.prodotto.brands ? ` (${voce.prodotto.brands})` : "")
+    );
+
+    if (sottaScorta) {
+      if (!voceTrovata) {
+        await this.database.spesa.add({
+          nome: nomeAtteso,
+          quantita: quantitaAttesa,
+          completato: false,
+          inserito_il: new Date().toISOString(),
+        } as VoceSpesa);
+      } else if (voceTrovata.completato) {
+        await this.database.spesa.update(voceTrovata.id, { 
+          completato: false,
+          quantita: quantitaAttesa,
+        });
+      }
+    } else {
+      if (voceTrovata && !voceTrovata.completato) {
+        await this.database.spesa.update(voceTrovata.id, { completato: true });
+      }
+    }
+  }
 
   private async eseguiRipetibile<T>(chiave: string | undefined, firma: string, operazione: () => Promise<T>): Promise<T> {
     if (chiave !== undefined) testo(chiave, "Chiave dell'operazione", 100);
@@ -449,7 +514,7 @@ export class ArchivioFridgeBrain {
             "Quantità residua",
             0.001,
             1_000_000,
-            misura === "pz",
+            misura === "pz" || misura === "bt",
           );
     const posizione = testo(
       dati.posizione === undefined
@@ -475,7 +540,7 @@ export class ArchivioFridgeBrain {
             "Scorta minima",
             0.001,
             1_000_000,
-            misura === "pz",
+            misura === "pz" || misura === "bt",
           );
     if (scorta_minima !== null && quantita === null)
       throw new ErroreApplicazione(
@@ -501,14 +566,28 @@ export class ArchivioFridgeBrain {
       const valori = await this.datiInventario(dati);
       const prodotto = await this.prodotto(codice);
       const id = await this.database.inventario.add({ ...valori, prodotto, inserito_il:new Date().toISOString() } as VoceInventario);
-      return this.voce(id);
+      const nuovaVoce = await this.voce(id);
+      await this.aggiornaSpesaAutomatica(nuovaVoce);
+      return nuovaVoce;
     });
   }
   async modificaInventario(id: number, valore: unknown): Promise<VoceInventario> {
-    return this.database.transazione(async () => { const attuale=await this.voce(id); const dati=await this.datiInventario(valore,attuale); await this.database.inventario.put({...attuale,...dati}); return this.voce(id); });
+    return this.database.transazione(async () => { 
+      const attuale=await this.voce(id); 
+      const dati=await this.datiInventario(valore,attuale); 
+      await this.database.inventario.put({...attuale,...dati}); 
+      const aggiornata = await this.voce(id);
+      await this.aggiornaSpesaAutomatica(aggiornata);
+      return aggiornata; 
+    });
   }
   async eliminaInventario(id: number): Promise<void> {
-    await this.database.transazione(async () => { const voce=await this.voce(id); await this.database.inventario.delete(id); await this.registra("eliminazione",`${voce.prodotto.product_name}: eliminato dall'inventario.`); });
+    await this.database.transazione(async () => { 
+      const voce=await this.voce(id); 
+      await this.database.inventario.delete(id); 
+      await this.rimuoviVoceSpesaAutomatica(voce);
+      await this.registra("eliminazione",`${voce.prodotto.product_name}: eliminato dall'inventario.`); 
+    });
   }
   async consumaInventario(id: number, valore: unknown, chiave?: string): Promise<void> {
     const dati=oggetto(valore); const quantita=dati.quantita===undefined?undefined:numero(dati.quantita,"Quantità da consumare",0.001);
@@ -516,11 +595,21 @@ export class ArchivioFridgeBrain {
       const voce=await this.voce(id);
       if (quantita!==undefined) {
         if (voce.quantita===null) throw new ErroreApplicazione("Registra prima la quantità residua per effettuare un consumo parziale.");
-        if (voce.unita==="pz" && !Number.isInteger(quantita)) throw new ErroreApplicazione("Inserisci un numero intero di pezzi.");
+        if ((voce.unita==="pz" || voce.unita==="bt") && !Number.isInteger(quantita)) throw new ErroreApplicazione(voce.unita==="pz" ? "Inserisci un numero intero di pezzi." : "Inserisci un numero intero di bottiglie.");
         if (quantita>voce.quantita) throw new ErroreApplicazione("La quantità da consumare supera quella disponibile.",409);
       }
       const residua=quantita===undefined?0:Number((voce.quantita!-quantita).toFixed(6));
-      if (residua<=0) await this.database.inventario.delete(id); else await this.database.inventario.update(id,{quantita:residua});
+      if (residua<=0) {
+        await this.database.inventario.delete(id);
+        if (voce.scorta_minima !== null && voce.scorta_minima !== undefined) {
+          const voceSimulata = { ...voce, quantita: 0 };
+          await this.aggiornaSpesaAutomatica(voceSimulata);
+        }
+      } else {
+        await this.database.inventario.update(id,{quantita:residua});
+        const voceAggiornata = await this.voce(id);
+        await this.aggiornaSpesaAutomatica(voceAggiornata);
+      }
       await this.registra("consumo",`${voce.prodotto.product_name}: ${quantita===undefined?"consumato completamente":`consumati ${quantita} ${voce.unita}`}.`);
     });
   }
@@ -569,7 +658,17 @@ export class ArchivioFridgeBrain {
         const voce=inventario.find((elemento)=>elemento.id===identificatore);
         if(!voce||voce.quantita===null||quantita>voce.quantita) throw new ErroreApplicazione("La quantità disponibile è cambiata. Genera una nuova ricetta.",409);
         const residua=Number((voce.quantita-quantita).toFixed(6));
-        if(residua<=0) await this.database.inventario.delete(identificatore);else await this.database.inventario.update(identificatore,{quantita:residua});
+        if(residua<=0) {
+          await this.database.inventario.delete(identificatore);
+          if (voce.scorta_minima !== null && voce.scorta_minima !== undefined) {
+            const voceSimulata = { ...voce, quantita: 0 };
+            await this.aggiornaSpesaAutomatica(voceSimulata);
+          }
+        } else {
+          await this.database.inventario.update(identificatore,{quantita:residua});
+          const voceAggiornata = await this.voce(identificatore);
+          await this.aggiornaSpesaAutomatica(voceAggiornata);
+        }
         await this.registra("consumo",`${voce.prodotto.product_name}: consumati ${quantita} ${voce.unita} per «${ricetta.titolo}».`);
       }
       await this.database.ricette.put({...riga,dati:{...ricetta,preparata_il:new Date().toISOString()}});
